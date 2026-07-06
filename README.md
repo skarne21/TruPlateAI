@@ -1,1 +1,1 @@
-# macrosnap
+# TruPlate AI
