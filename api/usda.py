@@ -24,6 +24,16 @@ _NUTRIENT_KEYS = {
     FAT: "fat_g",
 }
 
+# How far the top-ranked match's energy may sit from the vision model's own
+# estimate before we stop trusting USDA's ranking. 2x is wide enough to absorb
+# ordinary estimation error (measured 1.0-1.4x on correct matches) and tight
+# enough to catch a genuine mismatch (dehydrated vs raw banana was 3.9x).
+SANITY_RATIO = 2.0
+
+# Cap on how deep to look. Far enough down to find the right entry, not so far
+# that a barely-relevant food can win on energy alone.
+MAX_CANDIDATES = 10
+
 
 def search_food(query: str, page_size: int = 25) -> list[dict]:
     """Search USDA for a food. Returns raw result dicts, USDA's ranking preserved.
@@ -46,26 +56,59 @@ def search_food(query: str, page_size: int = 25) -> list[dict]:
     return response.json().get("foods", [])
 
 
-def pick_best_match(results: list[dict]) -> dict | None:
-    """Pick the best food from USDA results: the top-ranked non-Branded entry.
+def _energy_per_100g(food: dict) -> float | None:
+    for nutrient in food.get("foodNutrients", []):
+        if nutrient.get("nutrientId") == ENERGY_KCAL:
+            return nutrient.get("value")
+    return None
 
-    USDA's own relevance ranking is good -- measured correct at #1 across every
-    South Indian and restaurant dish tested. Branded rows are the exception:
-    they're specific commercial products (23 different jars of "GHEE" outrank
-    the generic "Ghee, clarified butter"), so they're skipped in favour of the
-    generic food.
+
+def pick_best_match(
+    results: list[dict], expected_kcal_per_100g: float | None = None
+) -> dict | None:
+    """Pick the best food from USDA results.
+
+    Default to USDA's own relevance ranking, skipping Branded rows -- those are
+    specific commercial products, and 23 different jars of "GHEE" outrank the
+    generic "Ghee, clarified butter".
 
     Deliberately NOT filtered to Foundation/SR Legacy data types: those are raw
     ingredients, while meal photos contain prepared dishes. That filter maps
     "sambar lentil vegetable stew" to "Chicken, stewing".
 
-    ponytail: no relevance threshold. Measured scores don't separate a correct
-    match (ghee, 526) from a wrong one (poha -> groundcherries, 640), so a
-    cutoff would reject good matches without catching bad ones. The real
-    mitigation is showing the matched description in the UI so the user can
-    spot and correct it. A per-user alias table is the Phase 3+ upgrade.
+    USDA's ranking is reliable for descriptive multi-word queries but not for
+    bare ones: "banana" ranks "Bananas, dehydrated, or banana powder"
+    (346 kcal/100g) above "Bananas, raw" (89), a 4x error on a photo of fruit.
+    So `expected_kcal_per_100g` -- the vision model's own estimate for the food
+    it actually saw -- is used as a sanity check. Ranking wins unless the top
+    hit's energy is grossly inconsistent with it, in which case the closest
+    candidate is taken instead.
+
+    The estimate only chooses BETWEEN USDA rows; the numbers still come from
+    USDA (invariant #1). Energy alone is not enough to rank by -- it picks
+    "Crepe, chocolate filled" over "Dosa, with filling" -- which is why
+    relevance stays the primary signal.
     """
-    return next((food for food in results if food.get("dataType") != "Branded"), None)
+    candidates = [f for f in results if f.get("dataType") != "Branded"][:MAX_CANDIDATES]
+    if not candidates:
+        return None
+
+    top = candidates[0]
+    top_energy = _energy_per_100g(top)
+    if not expected_kcal_per_100g or not top_energy:
+        return top
+
+    ratio = max(top_energy / expected_kcal_per_100g, expected_kcal_per_100g / top_energy)
+    if ratio <= SANITY_RATIO:
+        return top
+
+    # Top hit is implausible for what the model saw; prefer the nearest match.
+    scored = [
+        (abs(_energy_per_100g(f) - expected_kcal_per_100g), i, f)
+        for i, f in enumerate(candidates)
+        if _energy_per_100g(f)
+    ]
+    return min(scored)[2] if scored else top
 
 
 def macros_for_grams(food: dict, grams: float) -> dict[str, float | None]:

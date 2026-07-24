@@ -33,6 +33,18 @@ Also measured: **USDA's own relevance ranking put the correct food at #1 in all 
 
 **Corrected decision:** take USDA's top-ranked result, excluding only `Branded` (specific commercial products — noisy for generic dish identification). No preference ordering beyond that. This is both more accurate *and* less code than what we agreed on.
 
+**Amended after live testing (see §1a).** Ranking alone proved insufficient for bare one-word queries, so a sanity check was added.
+
+### 1a. Amendment: the energy sanity check
+
+The first real photo through the finished pipeline — two bananas — logged **830 kcal instead of ~214**. USDA ranks `Bananas, dehydrated, or banana powder` (346 kcal/100 g) above `Bananas, raw` (89) for the bare query `"banana"`. USDA's ranking is reliable for the descriptive multi-word queries measured in §1 ("idli steamed rice cake") but not for short ones.
+
+Notably the vision model's *own* estimate was correct (~87 kcal/100 g). So the model's estimate is now used as a **sanity check on the match**, not as a number: USDA's ranking wins unless the top hit's energy is more than **2×** away from what the model estimated for the food it actually saw, in which case the closest-energy candidate among the top 10 is taken instead.
+
+Ranking has to stay primary — ranking purely by energy agreement was measured to pick `Crepe, chocolate filled` over `Dosa, with filling`. Measured across 9 queries, the hybrid fixes banana and changes nothing else (correct matches sat at 1.0–1.4× ratios; the banana mismatch was 3.9×).
+
+This does not weaken invariant #1: the estimate only chooses *between USDA rows*, which is identification. Every logged number still comes from USDA.
+
 **A second finding:** USDA's `dataType` query parameter **cannot be used** to filter server-side. Passing `dataType=Survey (FNDDS)` returns `400 Bad Request` from their nginx — the URL-encoded parentheses (`%28`/`%29`) are rejected before reaching the application. Filtering must happen client-side in Python over an unfiltered result page. This is a real API defect worth a code comment so nobody "fixes" it back later.
 
 ---

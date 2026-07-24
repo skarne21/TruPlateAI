@@ -72,6 +72,36 @@ def test_nutrients_matched_by_id_not_name():
     assert macros_for_grams(food, 100)["kcal"] == pytest.approx(100.0)
 
 
+def test_sanity_check_overrides_an_implausible_top_match():
+    # Regression: a real photo of two bananas logged 830 kcal instead of ~210.
+    # USDA ranks "Bananas, dehydrated, or banana powder" (346 kcal/100g) above
+    # "Bananas, raw" (89) for the bare query "banana".
+    assert "dehydrated" in pick_best_match(FIXTURES["banana"])["description"]
+
+    # The vision model estimated ~89 kcal/100g for what it saw, which is 3.9x
+    # off the top hit -- so ranking gets overridden.
+    match = pick_best_match(FIXTURES["banana"], expected_kcal_per_100g=89)
+    assert match["description"] == "Bananas, raw"
+    assert macros_for_grams(match, 240)["kcal"] == pytest.approx(214, abs=5)
+
+
+def test_sanity_check_keeps_top_match_when_energy_is_plausible():
+    # Ranking stays the primary signal. Energy alone would pick "Crepe,
+    # chocolate filled" over "Dosa, with filling", so it must not override
+    # unless the disagreement is gross.
+    assert pick_best_match(FIXTURES["idli"], expected_kcal_per_100g=120)["description"] == "Idli"
+    assert (
+        pick_best_match(FIXTURES["sambar"], expected_kcal_per_100g=90)["description"]
+        == "Sambar, vegetable stew"
+    )
+
+
+def test_sanity_check_ignored_without_an_estimate():
+    assert pick_best_match(FIXTURES["banana"], expected_kcal_per_100g=None)["description"] == (
+        pick_best_match(FIXTURES["banana"])["description"]
+    )
+
+
 def test_known_limitation_homonym_match():
     # Documents real behaviour rather than asserting correctness: USDA has no
     # "poha" (flattened rice), so it matches a groundcherry entry that happens to

@@ -64,9 +64,11 @@ class ResolvedItem(BaseModel):
     fat_g: float | None = None
 
 
-def _priced_from_usda(query: str, grams: float, search: Search) -> tuple[dict, dict] | None:
+def _priced_from_usda(
+    query: str, grams: float, search: Search, expected_kcal_per_100g: float | None = None
+) -> tuple[dict, dict] | None:
     """Look a food up and scale it, or None if USDA can't price it."""
-    match = usda.pick_best_match(search(query))
+    match = usda.pick_best_match(search(query), expected_kcal_per_100g)
     if match is None:
         return None
     macros = usda.macros_for_grams(match, grams)
@@ -82,7 +84,14 @@ def resolve_items(
     resolved = []
 
     for item in analysis.items:
-        priced = _priced_from_usda(item.usda_query, item.portion.grams, search)
+        # The model's own estimate for this portion, per 100g, is the sanity
+        # check that stops "banana" matching dehydrated banana powder.
+        expected = (
+            item.llm_estimate.calories / item.portion.grams * 100
+            if item.portion.grams > 0
+            else None
+        )
+        priced = _priced_from_usda(item.usda_query, item.portion.grams, search, expected)
 
         if priced is not None:
             match, macros = priced
