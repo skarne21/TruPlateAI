@@ -135,6 +135,13 @@ def totals_for(items: list[ResolvedItem]) -> dict[str, float]:
     }
 
 
+def _join(names: list[str]) -> str:
+    """"a", "a and b", "a, b and c" -- for readable question text."""
+    if len(names) <= 1:
+        return names[0] if names else "this"
+    return f"{', '.join(names[:-1])} and {names[-1]}"
+
+
 def canonical_questions(analysis: VisionAnalysis) -> list[dict]:
     """Replace the model's free-text options with our priced, indexable ones."""
     questions = []
@@ -146,13 +153,18 @@ def canonical_questions(analysis: VisionAnalysis) -> list[dict]:
         if question.reason == "hidden_fat":
             options = FAT_OPTIONS
             impact = f"up to +{FAT_OPTIONS[-1][1] * _OIL_KCAL_PER_G:.0f} kcal"
+            # Python owns the options, so it owns the wording too -- left to the
+            # model we get "How was the sambar prepared?" above a list of
+            # amounts, which don't answer each other.
+            text = f"How much oil or ghee went into the {_join(question.affects_items)}?"
         else:
             options = PORTION_OPTIONS
             impact = "changes this item's portion"
+            text = f"How much {_join(question.affects_items)} was it?"
 
         questions.append({
             "id": question.id,
-            "question": question.question,
+            "question": text if question.affects_items else question.question,
             "reason": question.reason,
             "affects_items": question.affects_items,
             "options": [{"index": i, "label": label} for i, (label, _) in enumerate(options)],

@@ -98,6 +98,16 @@ def test_hidden_fat_question_gets_canonical_options():
     assert questions[0]["kcal_impact"] != "whatever"  # recomputed in Python
 
 
+def test_fat_question_wording_matches_its_options():
+    # Left to the model we get "How was the sambar prepared?" above a list of
+    # amounts -- a question its own options don't answer.
+    questions = canonical_questions(analysis_with([vision_item()], [{
+        "id": "q1", "question": "How was the sambar prepared?", "options": [],
+        "affects_items": ["sambar", "chutney"], "reason": "hidden_fat", "kcal_impact": "",
+    }]))
+    assert questions[0]["question"] == "How much oil or ghee went into the sambar and chutney?"
+
+
 def test_identification_questions_are_dropped_not_asked():
     # low_confidence / exclusion_conflict change identification, which Phase 1
     # handles via confirm-screen editing rather than a second LLM round-trip.
