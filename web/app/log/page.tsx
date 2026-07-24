@@ -11,6 +11,9 @@ import type { AnalyzeResult, ResolvedItem, Totals } from "./types";
 
 type Photo = { blob: Blob; previewUrl: string };
 
+// Matches MAX_IMAGES in api/routes/analyze.py.
+const MAX_PHOTOS = 5;
+
 export default function LogPage() {
   const router = useRouter();
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -30,20 +33,31 @@ export default function LogPage() {
     });
   }, [router]);
 
-  // Object URLs are a manual resource; without this every added photo leaks.
+  // Object URLs are a manual resource. A cleanup with an empty dependency list
+  // would close over the FIRST render's empty photo array and revoke nothing,
+  // so the latest list is tracked in a ref and read at unmount instead.
+  const photosRef = useRef<Photo[]>([]);
   useEffect(() => {
-    return () => photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    photosRef.current = photos; // no dependency list: sync after every render
+  });
+  useEffect(() => {
+    return () => photosRef.current.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
   }, []);
 
   async function addPhotos(files: FileList) {
+    // Only process what will actually fit -- creating object URLs first and
+    // slicing the overflow away afterwards leaks every discarded one.
+    const room = MAX_PHOTOS - photos.length;
+    if (room <= 0) return;
     const added = await Promise.all(
-      Array.from(files).map(async (file) => {
-        const blob = await downscaleImage(file);
-        return { blob, previewUrl: URL.createObjectURL(blob) };
-      })
+      Array.from(files)
+        .slice(0, room)
+        .map(async (file) => {
+          const blob = await downscaleImage(file);
+          return { blob, previewUrl: URL.createObjectURL(blob) };
+        })
     );
-    setPhotos((prev) => [...prev, ...added].slice(0, 5));
+    setPhotos((prev) => [...prev, ...added]);
   }
 
   function removePhoto(index: number) {
@@ -156,7 +170,7 @@ export default function LogPage() {
                     </button>
                   </div>
                 ))}
-                {photos.length < 5 && (
+                {photos.length < MAX_PHOTOS && (
                   <button
                     type="button"
                     onClick={() => fileInput.current?.click()}

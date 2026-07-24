@@ -1,20 +1,14 @@
-"use client";
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
 
-import { useEffect, useState } from "react";
+// The root used to render an API health-check readout left over from the
+// Phase 0 scaffold. Redirecting on the server means no flash of the wrong
+// page while a client-side session check resolves.
+export default async function Home() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-export default function Home() {
-  const [status, setStatus] = useState<string>("checking...");
-
-  useEffect(() => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/health`)
-      .then((r) => r.json())
-      .then((data) => setStatus(JSON.stringify(data)))
-      .catch(() => setStatus("unreachable"));
-  }, []);
-
-  return (
-    <main className="flex min-h-screen items-center justify-center">
-      <p className="text-xl">API health: {status}</p>
-    </main>
-  );
+  redirect(user ? "/dashboard" : "/login");
 }

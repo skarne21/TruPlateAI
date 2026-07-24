@@ -132,8 +132,12 @@ class UsdaCandidate(BaseModel):
     fdc_id: int
     description: str
     data_type: str
+    # All four macros: an item added by hand must contribute its carbs and fat
+    # to the meal like any other, not silently count as zero.
     kcal_per_100g: float | None
     protein_per_100g: float | None
+    carbs_per_100g: float | None
+    fat_per_100g: float | None
 
 
 @router.get("/usda/search", response_model=list[UsdaCandidate])
@@ -157,5 +161,7 @@ def usda_search(query: str, user=Depends(get_current_user_client)):
             data_type=food["dataType"],
             kcal_per_100g=macros["kcal"],
             protein_per_100g=macros["protein_g"],
+            carbs_per_100g=macros["carbs_g"],
+            fat_per_100g=macros["fat_g"],
         ))
     return candidates[:10]

@@ -37,6 +37,7 @@ export default function AddItem({ onAdd }: { onAdd: (item: ResolvedItem) => void
 
   function add(candidate: UsdaCandidate) {
     const scale = DEFAULT_GRAMS / 100;
+    const per100 = (value: number | null) => (value === null ? null : value * scale);
     onAdd({
       name: candidate.description,
       usda_query: query.trim(),
@@ -47,10 +48,10 @@ export default function AddItem({ onAdd }: { onAdd: (item: ResolvedItem) => void
       source: "usda",
       usda_fdc_id: candidate.fdc_id,
       usda_description: candidate.description,
-      kcal: candidate.kcal_per_100g === null ? null : candidate.kcal_per_100g * scale,
-      protein_g: candidate.protein_per_100g === null ? null : candidate.protein_per_100g * scale,
-      carbs_g: null,
-      fat_g: null,
+      kcal: per100(candidate.kcal_per_100g),
+      protein_g: per100(candidate.protein_per_100g),
+      carbs_g: per100(candidate.carbs_per_100g),
+      fat_g: per100(candidate.fat_per_100g),
     });
     setOpen(false);
     setQuery("");

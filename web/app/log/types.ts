@@ -47,6 +47,8 @@ export type UsdaCandidate = {
   data_type: string;
   kcal_per_100g: number | null;
   protein_per_100g: number | null;
+  carbs_per_100g: number | null;
+  fat_per_100g: number | null;
 };
 
 /** `fat_name` is null when the photo contained no cooking fat at all. */
