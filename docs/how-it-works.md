@@ -517,14 +517,22 @@ registered as Tailwind utility colors via `@theme inline`) and real
 components. The `ChipGroup` component, the sharp-rectangle button style, and
 the dark-mode-aware color tokens all trace directly back to that mockup.
 
-**Known inconsistency worth knowing about:** the login and signup pages
-([web/app/login/page.tsx](../web/app/login/page.tsx),
-[web/app/signup/page.tsx](../web/app/signup/page.tsx)) were built *before*
-the mockup existed and were never updated — they still use plain unstyled
-`border p-2 rounded` / `bg-black text-white` markup instead of the design
-system the onboarding wizard and dashboard now use. Functionally they work
-fine; visually they don't match. That's real leftover work, not a hidden
-bug — flagging it here so it doesn't look like an oversight nobody noticed.
+**A leftover that took two rounds to get fixed:** the login and signup pages
+were built *before* the mockup existed and kept plain unstyled
+`border p-2 rounded` / `bg-black text-white` markup for the whole of Phase 1.
+They worked, so nothing forced the issue — which is exactly how visual debt
+survives. They're now one shared
+[AuthForm](../web/app/AuthForm.tsx) component used by both
+[login](../web/app/login/page.tsx) and
+[signup](../web/app/signup/page.tsx), since the only real differences were
+which Supabase call runs and where it lands afterwards.
+
+The site root had the same shape of problem: it was still the Phase 0 API
+health-check readout, so anyone visiting the site saw `API health: {"ok":true}`.
+It now redirects on the server to the dashboard or the login page.
+
+**Lesson:** "it works" is not the same as "it's finished", and nothing in a
+test suite will ever tell you a page looks wrong.
 
 ---
 
@@ -607,4 +615,6 @@ Phase 1's exit criteria are met — which they now are.
   sanity check can't catch that one, because the wrong answer is calorically
   plausible. The current defence is showing you the matched USDA description so
   you can spot it. A per-user alias table is the planned fix.
-- **The login and signup pages still don't match the design system** (see §7).
+- **Nothing verifies that a page *looks* right.** Every visual bug in this
+  document was found by a human looking at a screenshot. Automated checks
+  confirm behaviour, not appearance.
