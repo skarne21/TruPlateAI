@@ -47,22 +47,30 @@ sequenceDiagram
     participant N as USDA FDC
     participant S as Supabase
 
-    U->>U: downscale image (max 1024px)
-    U->>A: POST /analyze (multipart: image?, caption?, input_mode)
+    U->>U: downscale each image (max 1024px)
+    U->>A: POST /analyze (multipart: images[]?, caption?, input_mode)
     A->>S: verify JWT, load profile
-    A->>G: vision prompt (profile-filled) + image → structured JSON
+    A->>G: vision prompt (profile-filled) + all images → structured JSON
     G-->>A: VisionAnalysis
     A->>N: search per item (usda_query)
     N-->>A: candidates
     A->>A: pick match, scale macros to grams
     A-->>U: items + canonical questions + totals
 
-    U->>A: POST /analyze/clarify (item state + answer)
-    A->>A: deterministic recalc (Python only, no LLM)
+    alt answered by tapping an option
+        U->>A: POST /analyze/clarify (items + question_id + option_index)
+        A->>A: deterministic recalc (Python only, no LLM)
+    else answered with a photo of the oil/butter
+        U->>A: POST /analyze/clarify (items + question_id + fat photo)
+        A->>G: identify fat type + amount from photo
+        G-->>A: {fat_name, grams}
+        A->>N: usda_query for that fat
+        A->>A: append fat as a normal meal item
+    end
     A-->>U: updated items + totals
 
-    U->>S: upload photo to meal-photos/{user_id}/... (direct, RLS-scoped)
-    U->>A: POST /log (final items, photo_path, logged_on)
+    U->>S: upload photos to meal-photos/{user_id}/... (direct, RLS-scoped)
+    U->>A: POST /log (final items, photo_paths[], logged_on)
     A->>S: insert meals + meal_items (as the user, RLS enforced)
     U->>A: GET /dashboard/today?date=...
     A-->>U: consumed vs. targets
@@ -103,10 +111,16 @@ Pydantic models mirroring `docs/vision-prompt.md`'s schema exactly: `Portion`, `
 
 `build_prompt(profile) -> str` fills `{{cuisines}}` and `{{exclusions}}` from the profile row. `{{frequent_restaurants}}` and `{{known_meals}}` are filled with `"(none yet)"` — both are derived from meal history that doesn't exist until Phase 3. The prompt degrades safely: with no known restaurants it asks the hidden-fat question more often, which is the conservative default.
 
-`analyze_meal(prompt, image_bytes=None, mime_type=None) -> VisionAnalysis` — one stateless `google-genai` call. Two SDK details confirmed against the installed version (2.10.0):
+`analyze_meal(prompt, images: list[tuple[bytes, str]] = []) -> VisionAnalysis` — one stateless `google-genai` call carrying **all** photos of the meal. Two SDK details confirmed against the installed version (2.10.0):
 
-- In-memory images use `types.Part.from_bytes(data=..., mime_type=...)` — no temp file, no Files API upload, so nothing touches disk.
+- In-memory images use `types.Part.from_bytes(data=..., mime_type=...)` — no temp file, no Files API upload, so nothing touches disk. Multiple images are just multiple parts in one `contents` list; Gemini is natively multi-image.
 - `GenerateContentConfig(response_mime_type="application/json", response_schema=VisionAnalysis)` makes Gemini enforce our schema server-side, and `response.parsed` returns the typed object.
+
+**Multiple photos of one meal** (different angles, or a close-up of one dish) improve portion estimation, which is the pipeline's weakest link. This needs an explicit prompt rule, because the obvious failure mode is the model reporting two dosas when it sees two photos of one dosa:
+
+> The photos all show THE SAME meal from different angles or distances. Identify each distinct food ONCE — never multiply portions by the number of photos. Use the extra angles to refine portion estimates and to resolve items obscured in another shot.
+
+This changes the prompt template, so `docs/vision-prompt.md` (the source of truth for the prompt) must be updated in the same commit — flagged here per `CLAUDE.md`'s rule against letting code and docs drift apart silently.
 
 Schema-enforced output makes malformed responses rare but not impossible (truncation, safety refusal). The **required retry path stays**: on `ValidationError`, retry once with the validation error appended to the prompt; on a second failure raise, and the route returns `502` with a clear message.
 
@@ -119,11 +133,30 @@ FAT_OPTIONS  = [("none", 0.0), ("1 tsp total", 4.5), ("1 tbsp total", 13.6), ("2
 PORTION_OPTIONS = [("about half", 0.5), ("as estimated", 1.0), ("about 1.5x", 1.5), ("about double", 2.0)]  # gram multiplier
 ```
 
-The frontend returns an **option index**, not a string — so `POST /analyze/clarify` never parses natural language, and the recalculation is pure arithmetic (added fat × 9 kcal/g spread across `affects_items`; portion multiplier applied to that item's grams then re-scaled from the same per-100 g USDA data). No second Gemini call, satisfying invariant #10.
+The frontend returns an **option index**, not a string — so `POST /analyze/clarify` never parses natural language, and the recalculation is pure arithmetic. No second Gemini call, satisfying invariant #10.
+
+**Cooking fat is modelled as a normal meal item, not as a special adjustment.** Answering the hidden-fat question appends an item (`name: "ghee"`, `grams: 13.6`, `source: "user"`) that flows through the *same* USDA mapping every other item uses. This is one code path instead of two, it gets real USDA numbers for the fat instead of a hardcoded 9 kcal/g (butter is ~717 kcal/100 g vs ghee ~900 — they are not interchangeable), and the fat shows up as a visible line item the user can edit or delete like anything else. `PORTION_OPTIONS` stays a pure multiplier on an existing item's grams.
 
 `kcal_impact` is **computed in Python** from the canonical options rather than trusting the LLM's estimate string, so the number shown to the user is the number that will actually be applied.
 
 This keeps `docs/vision-prompt.md`'s published schema unchanged — the LLM still emits `options: string[]` as documented; Python simply overrides them. No doc/code conflict.
+
+### Answering the fat question with a photo
+
+Tappable options rely on the user remembering how much oil went in the pan, which is exactly the estimate people are worst at — and hidden fat is the single largest documented error source this app is designed against (`project-plan.md` §2). So a hidden-fat question can **also** be answered by attaching a photo of the oil/ghee/butter used: the bottle, the jar, or (better) the spoon or pan.
+
+`POST /analyze/clarify` accepts an optional image alongside the answer. When present, it makes one small, stateless Gemini call with a narrow schema:
+
+```python
+class FatAnswer(BaseModel):
+    fat_name: str            # "ghee", "olive oil", "butter" -> becomes the usda_query
+    grams: float | None      # null when the photo shows the type but not the amount
+    confidence: float
+```
+
+The result becomes a fat item through the ordinary USDA path. If `grams` is `None` (a photo of a ghee jar shows *what* but not *how much*), the canonical amount options stay on screen — now correctly priced for the identified fat rather than a generic default. That fallback is required, not polish: without it the app would have to invent a quantity it cannot see.
+
+**This does not violate invariant #10.** The LLM identifies *what fat and how much* — identification and portion, its job under invariant #1. Python still computes every calorie, from USDA. `project-plan.md` §3.3.6 explicitly sanctions this: *"A follow-up LLM call happens only when the answer changes identification itself."* A photo of the oil does exactly that.
 
 **Questions we do not generate in Phase 1:** `low_confidence` and `exclusion_conflict` change *identification*, not arithmetic, which per `project-plan.md` §3.3.6 would need a follow-up LLM call. Instead these surface as **prominent warnings on the confirm screen**, where full item editing (§5) already lets the user fix the identification directly. This is deliberate scope: it satisfies the exclusion-misidentification intent without building a second LLM round-trip.
 
@@ -131,10 +164,10 @@ This keeps `docs/vision-prompt.md`'s published schema unchanged — the LLM stil
 
 | Route | Purpose |
 |---|---|
-| `POST /analyze` | multipart (`image?`, `caption?`, `input_mode`) → items + questions + totals. At least one of image/caption required (invariant #7: caption is never mandatory). |
-| `POST /analyze/clarify` | current items + `question_id` + `option_index` → updated items + totals. Pure Python. |
+| `POST /analyze` | multipart (`images[]?`, `caption?`, `input_mode`) → items + questions + totals. At least one image or a caption required (invariant #7: caption is never mandatory). |
+| `POST /analyze/clarify` | current items + `question_id` + (`option_index` \| fat photo) → updated items + totals. Pure Python unless a photo is attached. |
 | `GET /usda/search?query=` | top non-Branded candidates with per-100 g macros, for the add/rename-item flow. |
-| `POST /log` | final items + `photo_path?` + `logged_on` → writes `meals` + `meal_items`. |
+| `POST /log` | final items + `photo_paths[]` + `logged_on` → writes `meals` + `meal_items`. |
 | `GET /dashboard/today?date=` | today's consumed totals vs. targets. |
 
 `main.py` is currently one file with two routes; adding five more plus their request models makes it too big to hold in one read. Split routes into `api/routes/` (`profile.py`, `analyze.py`, `meals.py`) mounted via `APIRouter`, keeping `main.py` as app setup + middleware only. This is a targeted improvement to code being actively worked in, not unrelated refactoring.
@@ -151,7 +184,7 @@ meals(
   logged_at timestamptz default now(),
   logged_on date not null,              -- client's LOCAL date; see timezone note
   input_mode text check (input_mode in ('photo','text','photo_text')),
-  photo_path text, caption text,
+  photo_paths text[] not null default '{}', caption text,
   status text default 'confirmed' check (status in ('confirmed','draft','failed')),
   kcal numeric, protein_g numeric, carbs_g numeric, fat_g numeric,
   analysis_json jsonb                   -- raw vision response, for debugging + Phase 4 evals
@@ -178,6 +211,8 @@ Both tables get RLS enabled at creation with select/insert/update/delete policie
 
 Photos upload **directly from the browser to Supabase Storage**, not proxied through FastAPI — this is an RLS-scoped call, not a secret-bearing one, so it doesn't need the backend (invariant #2 is about API keys, and no key is involved). Upload happens **on confirm only**, so abandoned or retried analyses never leave orphaned objects.
 
+`photo_paths` is a `text[]` rather than a `meal_photos` child table: Phase 1 needs no per-photo metadata, and the codebase already uses `text[]` for `cuisines`/`exclusions`. A photo attached to answer the fat question is stored in the same array — which photo answered which question isn't information anything reads back in Phase 1.
+
 Not built in Phase 1 (Phase 2/3 per phase discipline): `meal_embeddings`, `conversations`, `messages`, `recipes`, `weights`, `targets` history.
 
 ---
@@ -185,10 +220,12 @@ Not built in Phase 1 (Phase 2/3 per phase discipline): `meal_embeddings`, `conve
 ## 5. Frontend
 
 **New route `/log`:**
-- Photo input with `capture="environment"` (opens the rear camera on mobile) and/or a caption textarea. Either alone works, or both together — one code path, `input_mode` derived from what's present.
-- Client-side downscale to max 1024px via canvas before use. The same downscaled blob is sent to `/analyze` and later uploaded to Storage — meal photos need no more resolution than that for either Gemini or storage, and it makes both transfers cheap on cell data.
+- **Multi-photo input** with `capture="environment"` (opens the rear camera on mobile), and/or a caption textarea. Either alone works, or both together — one code path, `input_mode` derived from what's present. Selected photos show as a thumbnail strip with a remove button on each and an "add another" tile, so a user can shoot the plate, then a close-up of one dish, then send both.
+- Client-side downscale to max 1024px via canvas before use. The same downscaled blobs are sent to `/analyze` and later uploaded to Storage — meal photos need no more resolution than that for either Gemini or storage, and it makes both transfers cheap on cell data. This matters more with several photos per meal.
 
 **Results screen:** items with USDA-grounded macros, each showing its source (USDA description, or a visible "AI estimate" badge for `source: "llm"`). Low-confidence items and any exclusion warnings are made **visually obvious** — carrying over the mockup feedback that uncertainty must be easy to spot and click into, rather than buried. Clarifying questions render as tappable option buttons; tapping calls `/analyze/clarify` and updates totals in place.
+
+Hidden-fat questions additionally offer **"or photograph what you used"** next to the options — opening the camera, sending the shot to `/analyze/clarify`, and adding the identified fat as a line item. When the photo identifies the fat but not the amount, the amount options remain on screen, relabelled for the specific fat found.
 
 **Confirm screen — full editing** (per the agreed decision): adjust grams per item (macros recompute live from the same per-100 g data), remove an item, rename an item (re-runs `/usda/search`), and add a missed item by free text (search → pick a USDA match → add). Submit uploads the photo, calls `/log`, redirects to the dashboard.
 
@@ -203,8 +240,8 @@ Not built in Phase 1 (Phase 2/3 per phase discipline): `meal_embeddings`, `conve
 Unit tests written **with** each feature, not after:
 
 - `api/tests/test_usda_mapping.py` — `pick_best_match` excludes Branded and respects USDA rank; `macros_for_grams` scaling arithmetic; missing-nutrient → `None`, not `0`. Fixtures are captured real USDA responses, so tests don't hit the network.
-- `api/tests/test_clarify.py` — fat-option gram/kcal math across all four options, portion multipliers, `kcal_impact` computation, multi-item distribution.
-- `api/tests/test_vision.py` — `VisionAnalysis` validation accepts the documented example from `vision-prompt.md`; malformed output triggers exactly one retry then fails cleanly (Gemini mocked — no API calls in the test suite).
+- `api/tests/test_clarify.py` — fat-option grams across all four options, the appended fat item priced from USDA (not a hardcoded 9 kcal/g), portion multipliers, `kcal_impact` computation, and the photo-answer path with `grams: None` falling back to the amount options instead of inventing a quantity.
+- `api/tests/test_vision.py` — `VisionAnalysis` validation accepts the documented example from `vision-prompt.md`; malformed output triggers exactly one retry then fails cleanly; multiple images become multiple parts in a single call (Gemini mocked — no API calls in the test suite).
 
 Named `test_usda_mapping.py`, not `test_usda.py`, to avoid colliding with the existing sanity script `api/scripts/test_usda.py`.
 
