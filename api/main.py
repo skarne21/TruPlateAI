@@ -26,6 +26,7 @@ def health():
 
 
 class ProfileIn(TargetsInput):
+    gym_days: int = 0
     cuisines: list[str] = []
     budget_level: str | None = None
     exclusions: list[str] = []
@@ -39,7 +40,7 @@ def create_profile(body: ProfileIn, user=Depends(get_current_user_client)):
         "user_id": user_id,
         "goal": body.goal,
         "rate_lb_per_week": body.rate_lb_per_week,
-        "gym_days": 0,
+        "gym_days": body.gym_days,
         "activity_level": body.activity_level,
         "height_cm": body.height_cm,
         "weight_kg": body.weight_kg,
