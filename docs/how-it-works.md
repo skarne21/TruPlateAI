@@ -1,6 +1,6 @@
 # How TruPlate AI Works — a walkthrough for a beginner
 
-This document explains what's actually been built so far (Phase 0 of 5 — see
+This document explains what's actually been built so far (Phases 0 and 1 of 5 — see
 [project-plan.md](project-plan.md) for the full roadmap), how the pieces fit
 together, and every real bug we hit while building it and why it happened.
 It's written for someone who can code but hasn't necessarily used Next.js,
@@ -22,13 +22,18 @@ guessing) supplies the calorie and macro numbers. Two AI assistants ("Coach"
 and "Foodie") will eventually give advice based on your actual logged
 history.
 
-**What exists right now (Phase 0):** accounts, login, an onboarding wizard
-that computes your personalized calorie/protein targets, and a dashboard that
-shows them. There is no photo analysis yet — that's Phase 1, the next thing
-to be built. Phase 0's whole job was to prove the foundation works end to
-end: a user can sign up, answer some questions, and see a number that was
-computed *for them*, and that number is still there the next time they log
-in.
+**What exists right now (Phases 0 and 1):**
+
+- *Phase 0 — foundation:* accounts, login, an onboarding wizard that computes
+  your personalized calorie/protein targets, and a dashboard that shows them.
+- *Phase 1 — the core loop:* photograph a meal (or describe it, or both), an
+  AI identifies the foods and portions, real macro numbers come from the USDA
+  database, the app asks up to three bounded questions about things that
+  actually move the number (mainly hidden cooking oil), you edit anything
+  that's wrong, and it's logged against today's targets.
+
+Not built yet: the Coach and Foodie assistants, voice input, meal memory, and
+the adaptive-targets engine — Phases 2 through 4.
 
 ---
 
@@ -167,19 +172,76 @@ about what's built instead of implying features exist that don't (see
 [CLAUDE.md](../CLAUDE.md)'s "errors are handled visibly" rule, applied here
 to *missing* features too).
 
+### Logging a meal (the Phase 1 core loop)
+
+This is the part that makes it an app rather than a form. The flow lives in
+[web/app/log/page.tsx](../web/app/log/page.tsx):
+
+1. **Input.** You attach up to five photos (all of the *same* meal — different
+   angles help the AI judge portions) and/or type a description. Either alone
+   works. Photos are shrunk to 1024px in the browser first
+   ([web/lib/image.ts](../web/lib/image.ts)) — a phone photo is several
+   megabytes and no model needs that much to see a plate.
+2. **Analysis.** `POST /analyze` ([api/routes/analyze.py](../api/routes/analyze.py))
+   builds a prompt from *your* profile (your cuisines and exclusions get
+   injected into it) and makes one Gemini call.
+   [api/vision.py](../api/vision.py) forces the reply into a fixed JSON shape,
+   because free-form text from an AI is not something you can build software on.
+3. **Pricing.** Each identified food gets looked up in USDA
+   ([api/usda.py](../api/usda.py)) and its per-100g numbers scaled to your
+   actual portion. **The AI never supplies the final calorie number** — that's
+   the project's central rule. If USDA has no usable match, the AI's own
+   estimate is used *and visibly labelled as an estimate*.
+4. **Questions.** [api/analysis.py](../api/analysis.py) turns the model's
+   questions into a fixed set of options that Python knows the value of (1 tbsp
+   of oil = 13.6g). You can also answer by *photographing the oil you used*.
+5. **Confirm.** Edit grams, remove items, add anything missed.
+   `POST /log` writes it to the database and the dashboard updates.
+
+**Why cooking oil gets its own question.** It's the single biggest source of
+error in photo-based tracking, because you cannot see oil that's already been
+absorbed into food. A curry cooked with two tablespoons of ghee has ~240
+calories that no photo will ever reveal. Asking one question recovers them.
+
+**Why the fat gets added as a normal food item.** When you answer "1 tbsp", the
+app doesn't apply a magic adjustment — it adds *ghee* to your meal as an
+ordinary item and looks it up in USDA like anything else. That means it gets
+real numbers (butter is ~717 kcal/100g, ghee ~900 — a single hardcoded value
+would be wrong for one of them), and you can see and delete it like any other
+food. One code path instead of two.
+
 ---
 
 ## 4. The database
 
-One table exists so far,
-[supabase/migrations/0001_profiles.sql](../supabase/migrations/0001_profiles.sql):
-`profiles`, one row per user, with a `check` constraint on `goal`,
+[supabase/migrations/0001_profiles.sql](../supabase/migrations/0001_profiles.sql)
+creates `profiles`, one row per user, with a `check` constraint on `goal`,
 `activity_level`, and `sex` (Postgres rejects the insert at the database
 level if you send a value outside the allowed set — a cheap extra
 guarantee beyond whatever the API already validates). `cuisines` and
 `exclusions` are Postgres text arrays (`text[]`), so a user's custom
 "no cilantro" entry is just another string in the array, no separate table
 needed.
+
+[supabase/migrations/0002_meals.sql](../supabase/migrations/0002_meals.sql)
+adds `meals` (one row per logged meal, with the summed totals) and
+`meal_items` (one row per food in it), plus a private storage bucket for
+photos. Three decisions in there worth understanding:
+
+- **`meal_items` stores `user_id` even though it could look it up through
+  `meals`.** Duplicating it lets the security policy be a simple column
+  comparison instead of a subquery that runs for every row. This is normal
+  practice, not sloppiness.
+- **`logged_on` is the date *your device* says it is.** "Today's totals" is a
+  local-calendar question, and a server in another timezone has no reliable
+  way to know what day it is where you are. Rather than doing timezone maths
+  (a famous source of bugs), the browser sends its own date and the server
+  just filters on it.
+- **Photos go straight from your browser to storage**, not through the
+  backend. The rule about routing everything through FastAPI exists to protect
+  *API keys*, and no key is involved here — the storage bucket's own policy
+  restricts you to files under your own user ID. They upload only when you
+  confirm, so abandoned analyses don't leave junk behind.
 
 ---
 
@@ -324,6 +386,97 @@ working replacement on Windows:
 `taskkill //PID <id> //F` to kill it (note the double slashes — Git Bash's
 path-mangling otherwise eats a single `-PID`).
 
+### Choosing the wrong USDA data source (a design mistake, caught before coding)
+
+USDA's database has several "data types". Foundation and SR Legacy are *raw
+ingredients* (raw rice, butter, a raw chicken breast). Survey (FNDDS) is
+*prepared dishes* — what people actually eat.
+
+The original plan was to prefer Foundation/SR Legacy, on the reasoning that
+they're the most authoritative. Testing that against the live API before
+writing any code showed it was backwards: for every one of 8 test foods, the
+best Foundation/SR Legacy match was **wrong**, and the FNDDS match was right.
+The worst case: `sambar lentil vegetable stew` matched **"Chicken, stewing"** —
+which would log meat macros for a vegetarian dish, for a user whose profile
+says no seafood and South Indian. A meal photo contains *cooked dishes*, so the
+"raw ingredients" table was never the right one.
+
+**Lesson:** the plan was wrong and 10 minutes of hitting the real API caught
+it. Assumptions about an external API are worth testing before building on them.
+
+### The banana that was 4x too many calories
+
+The very first real photo through the finished pipeline — two bananas — logged
+**830 calories instead of ~214**.
+
+The AI was not at fault; it correctly said "banana, 240g" and estimated 210
+calories. The bug was in the USDA lookup: for the plain search term `banana`,
+USDA ranks **"Bananas, dehydrated, or banana powder"** (346 cal/100g) *above*
+**"Bananas, raw"** (89 cal/100g). Dried fruit is far denser than fresh, hence
+the 4x.
+
+This exposed a flaw in the earlier testing: the 8 foods tested above all used
+descriptive multi-word searches ("idli steamed rice cake"), where USDA's
+ranking is good. A single bare word like "banana" is far more ambiguous.
+
+The fix uses information already available: **the AI's own estimate as a sanity
+check on the match.** USDA's ranking is trusted by default, *unless* the top
+result's calories-per-100g is more than 2x away from what the AI estimated for
+the food it actually looked at — in which case the closest candidate wins.
+
+The interesting part is what *didn't* work. Simply picking whichever USDA entry
+was closest in calories fixed the banana but broke dosa, matching it to
+"Crepe, chocolate filled". Relevance and calorie-plausibility each carry real
+information and neither alone is enough; the working rule uses relevance as the
+primary signal and calories only as a veto. Verified across 9 foods: banana
+fixed, nothing else changed.
+
+**Lesson:** an end-to-end test with real data found in one run what unit tests
+with hand-picked examples had missed — because the hand-picked examples shared
+a hidden property (all multi-word) that real inputs don't.
+
+### "CORS error" again — and again it wasn't CORS
+
+Testing the photo-answer feature in a browser produced
+`blocked by CORS policy` on `/analyze/fat-photo`. Exactly like the two Phase 0
+cases, it was not a CORS problem at all.
+
+The real cause was in the server log: **Gemini returned `503 UNAVAILABLE` —
+"this model is currently experiencing high demand."** That exception wasn't
+caught, so it escaped as a generic 500 from a layer that sits *outside* the
+CORS middleware, producing a response with no CORS headers — which the browser
+reports as a CORS failure.
+
+Rather than patching that one endpoint, the fix went to the shared choke point:
+every Gemini call now goes through a single wrapper in
+[api/vision.py](../api/vision.py) that converts service failures into a proper
+error, so neither caller can reintroduce the bug. The user now sees "The AI
+service is busy right now" with their photo and notes still on screen.
+
+The same hole existed for USDA, which is rate-limited to 1000 requests/hour and
+spends one per food — so it's a matter of *when*, not *if*. There, failing the
+whole meal would be the wrong response: a USDA outage now degrades that item to
+the AI's estimate (already labelled as an estimate in the UI) instead of losing
+your log.
+
+**Lesson (the third time it's come up):** "CORS error" in a browser console is
+frequently a lie. Read the *server* log before touching CORS config.
+
+### The AI writing an error message into a food name
+
+When the fat-identification feature was given a photo with no oil in it, the
+screen read: **"Found no fat detected in your photo."**
+
+The `fat_name` field was typed as a plain string, so with no way to say "there
+isn't one", the model wrote its explanation into the name field — and the UI
+dutifully rendered it as though it were a food. Fixed by making the field
+nullable and telling the model to return null, explicitly instructing it not to
+write a sentence there. Now it reads "Couldn't spot any oil or butter in that
+photo — pick an amount below."
+
+**Lesson:** when a data model has no way to express "none", something will
+express it badly. Model the absent case deliberately.
+
 ### A design bug caught in the mockup before it ever reached real code
 While building the standalone HTML/CSS design mockup
 ([docs/mockup.html](mockup.html)) — used to nail down the look before
@@ -377,21 +530,45 @@ bug — flagging it here so it doesn't look like an oversight nobody noticed.
 
 ## 8. How this was verified (not just "it typechecks")
 
-Every feature in Phase 0 was checked by actually driving it in a real
-browser with Playwright (browser automation — small scripts that open a
-real Chromium instance, click buttons, fill forms, and read back what
-rendered), not just by running `tsc` or `pytest` and assuming it worked.
-The final Phase 0 check ran the whole loop in one script: sign up → hit
-`/dashboard` early to confirm the "you haven't onboarded yet" state shows
-correctly → complete the wizard → confirm the dashboard shows real computed
-numbers → log out → confirm redirect to `/login` → log back in → confirm the
-*same* numbers reappear (proving they persisted in the database, not just
-in memory) — while watching the browser console for anything unexpected.
-This is what actually caught the `gym_days` bug and both CORS-shaped bugs
-above; none of those would have failed a typecheck.
+Every feature was checked by actually driving it in a real browser with
+Playwright (browser automation — small scripts that open a real Chromium
+instance, click buttons, fill forms, and read back what rendered), not just by
+running `tsc` or `pytest` and assuming it worked.
 
-Backend math (`api/targets.py`) is covered by `pytest`
-([api/tests/test_targets.py](../api/tests/test_targets.py)), 7/7 passing.
+The Phase 0 check ran the whole loop in one script: sign up → hit `/dashboard`
+early to confirm the "you haven't onboarded yet" state shows correctly →
+complete the wizard → confirm the dashboard shows real computed numbers → log
+out → confirm redirect to `/login` → log back in → confirm the *same* numbers
+reappear (proving they persisted in the database, not just in memory) — while
+watching the browser console for anything unexpected.
+
+Phase 1 added: attach two photos → analyze → answer the oil question → edit a
+portion → log → confirm the dashboard total moved. Scaling was checked
+numerically rather than by eye (tripling a portion must triple its calories),
+and removing the last item must *disable* logging rather than save an empty
+meal.
+
+This browser-driven habit is what caught nearly every real bug in this
+document — `gym_days`, all three CORS-shaped failures, the 4x banana, and the
+AI writing an error into a food name. **None of them would have failed a
+typecheck, and most wouldn't have failed a unit test either**, because unit
+tests only check the cases you already thought of.
+
+Backend logic is covered by `pytest` — **48 tests passing**: the targets maths
+([test_targets.py](../api/tests/test_targets.py)), USDA matching and scaling
+([test_usda_mapping.py](../api/tests/test_usda_mapping.py)), the AI response
+schema and its retry/outage handling
+([test_vision.py](../api/tests/test_vision.py)), and the clarifying-answer
+arithmetic ([test_analysis.py](../api/tests/test_analysis.py)). The USDA tests
+run against saved real API responses, so the suite needs no network and can't
+break because someone else's server is down.
+
+Phase 1 verification went further than the browser, because the security
+claims deserve proof rather than assertion: a script created two accounts,
+logged a meal as the first, then confirmed the second could see **zero** of its
+meals and got an error trying to read its photo. It also confirmed the server
+ignores a client that lies about its own calorie total, and rejects a photo
+path belonging to another user.
 
 ---
 
@@ -404,10 +581,30 @@ a real pipeline on top), `profiles` table with RLS, the onboarding wizard,
 the deterministic targets engine with unit tests, and a dashboard that shows
 real persisted data.
 
-**Next (Phase 1 — the core loop, not yet started):** `POST /analyze` (photo
-and/or text → Gemini identifies foods → USDA supplies real macro numbers),
-clarifying questions for things like hidden cooking oil, a confirm/adjust
-screen, `POST /log` to actually save a meal, and real numbers on the
-dashboard instead of just targets. Per [CLAUDE.md](../CLAUDE.md)'s phase
-discipline, none of this gets built before Phase 0's exit criteria are met
-— which they now are.
+**Done (Phase 1 — the core loop):** `POST /analyze` handling photos, text, or
+both; USDA lookup with the calorie sanity check; bounded clarifying questions
+answerable by tap or by photographing the oil; a confirm screen with full item
+editing; `POST /log`; and a dashboard showing today's real totals against your
+targets. 48 unit tests, plus browser and live-API verification.
+
+Verified end to end: two photos of one meal → correctly identified without
+double-counting → 1 tbsp of ghee added as 119 calories of real USDA "Ghee,
+clarified butter" → portion edited → logged → dashboard updated. A second user
+account confirmed it can see **none** of the first user's meals or photos.
+
+**Next (Phase 2 — assistants and voice, not started):** the Coach and Foodie
+chat assistants with tool calling, and voice meal logging. Per
+[CLAUDE.md](../CLAUDE.md)'s phase discipline, none of that gets built until
+Phase 1's exit criteria are met — which they now are.
+
+### Known limitations, stated plainly
+
+- **Portion estimates from a photo are roughly ±20–30%.** No amount of
+  engineering fixes that; it's why the app leans on trends over time and makes
+  editing easy rather than claiming precision it doesn't have.
+- **USDA doesn't contain every food.** It has no *poha* (flattened rice), so it
+  returns a groundcherry entry that happens to share the word — and the calorie
+  sanity check can't catch that one, because the wrong answer is calorically
+  plausible. The current defence is showing you the matched USDA description so
+  you can spot it. A per-user alias table is the planned fix.
+- **The login and signup pages still don't match the design system** (see §7).
