@@ -1,6 +1,7 @@
 import os
 from fastapi import Header, HTTPException
 from supabase import create_client, Client
+from supabase_auth.errors import AuthApiError
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
@@ -12,7 +13,14 @@ def get_current_user_client(authorization: str = Header(...)) -> tuple[str, Clie
     token = authorization.removeprefix("Bearer ")
 
     client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-    user_response = client.auth.get_user(token)
+    # A token from a session that's since been signed out (e.g. the browser
+    # raced a logout/login) raises AuthApiError rather than returning None --
+    # must be caught here or it escapes as an unhandled 500 with no CORS
+    # headers (Starlette's ServerErrorMiddleware sits outside CORSMiddleware).
+    try:
+        user_response = client.auth.get_user(token)
+    except AuthApiError:
+        raise HTTPException(401, "Invalid or expired token")
     if user_response.user is None:
         raise HTTPException(401, "Invalid or expired token")
 
