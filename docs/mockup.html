@@ -1,0 +1,819 @@
+<title>TruPlate — Product Walkthrough</title>
+<style>
+  :root {
+    --bg: #FAF6EE;
+    --surface: #FFFFFF;
+    --surface-2: #F1EAD9;
+    --ink: #241C11;
+    --ink-dim: #6B5F4C;
+    --border: #E7DCC5;
+    --accent: #E85D2C;
+    --accent-2: #F5A623;
+    --good: #2E9469;
+    --warn: #D64550;
+    --bezel: #100E0A;
+    --shadow: 0 30px 60px -20px rgba(36,28,17,0.35);
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16130E;
+      --surface: #221D14;
+      --surface-2: #2B241A;
+      --ink: #F6EFE1;
+      --ink-dim: #B2A489;
+      --border: #3A3122;
+      --accent: #FF7A45;
+      --accent-2: #FFB443;
+      --good: #5FBF97;
+      --warn: #FF6B6B;
+      --shadow: 0 30px 60px -20px rgba(0,0,0,0.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16130E; --surface: #221D14; --surface-2: #2B241A; --ink: #F6EFE1;
+    --ink-dim: #B2A489; --border: #3A3122; --accent: #FF7A45; --accent-2: #FFB443;
+    --good: #5FBF97; --warn: #FF6B6B; --shadow: 0 30px 60px -20px rgba(0,0,0,0.6);
+  }
+  :root[data-theme="light"] {
+    --bg: #FAF6EE; --surface: #FFFFFF; --surface-2: #F1EAD9; --ink: #241C11;
+    --ink-dim: #6B5F4C; --border: #E7DCC5; --accent: #E85D2C; --accent-2: #F5A623;
+    --good: #2E9469; --warn: #D64550; --shadow: 0 30px 60px -20px rgba(36,28,17,0.35);
+  }
+
+  * { box-sizing: border-box; }
+  /* buttons/inputs get a UA color that doesn't inherit from the page — reset it so
+     every control follows the theme instead of the browser's own dark/light guess */
+  button, input, select, textarea { color: inherit; font: inherit; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    padding: 32px 16px 56px;
+    transition: background .25s ease, color .25s ease;
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .toolbar-title { font-weight: 700; font-size: 0.95rem; color: var(--ink-dim); letter-spacing: .02em; }
+  .pill-btn {
+    font-family: inherit;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--ink);
+    border-radius: 0;
+    padding: 7px 14px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform .15s ease, border-color .15s ease;
+  }
+  .pill-btn:hover { border-color: var(--accent); }
+  .pill-btn:active { transform: scale(0.96); }
+  .pill-btn.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+  .frame-wrap { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+
+  .device {
+    width: min(390px, 92vw);
+    height: min(844px, 82vh);
+    background: var(--bezel);
+    border-radius: 52px;
+    padding: 14px;
+    box-shadow: var(--shadow);
+    position: relative;
+  }
+  .screen-port {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: var(--bg);
+    border-radius: 38px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .notch {
+    position: absolute;
+    top: 0; left: 50%; transform: translateX(-50%);
+    width: 120px; height: 28px;
+    background: var(--bezel);
+    border-radius: 0 0 18px 18px;
+    z-index: 30;
+  }
+  .statusbar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px 24px 4px;
+    font-size: 0.75rem; font-weight: 700; color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .statusbar .icons { display: flex; gap: 5px; align-items: center; }
+  .sig-bars { display:flex; align-items:flex-end; gap:2px; height:9px; }
+  .sig-bars span { width:2.5px; background: var(--ink); border-radius:1px; display:block; }
+  .sig-bars span:nth-child(1){height:4px;} .sig-bars span:nth-child(2){height:6px;}
+  .sig-bars span:nth-child(3){height:8px;} .sig-bars span:nth-child(4){height:9px;}
+  .batt { width:22px; height:11px; border:1.4px solid var(--ink); border-radius:3px; position:relative; }
+  .batt::after { content:""; position:absolute; right:-4px; top:3px; width:2px; height:5px; background:var(--ink); border-radius:1px; }
+  .batt-fill { position:absolute; inset:1.5px; width:70%; background:var(--ink); border-radius:1.5px; }
+
+  .screens { position: relative; flex: 1; overflow: hidden; }
+  .screen {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    opacity: 0; visibility: hidden;
+    transform: translateY(8px);
+    transition: opacity .28s ease, transform .28s ease;
+    padding: 6px 24px 24px;
+    overflow-y: auto;
+  }
+  .screen.active { opacity: 1; visibility: visible; transform: translateY(0); }
+  @media (prefers-reduced-motion: reduce) {
+    .screen { transition: none; }
+  }
+
+  .eyebrow {
+    font-size: 0.72rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--accent); margin: 18px 0 6px;
+  }
+  h1.headline { font-size: 1.5rem; font-weight: 800; margin: 0 0 4px; letter-spacing: -0.01em; text-wrap: balance; }
+  p.sub { font-size: 0.9rem; color: var(--ink-dim); margin: 0 0 20px; line-height: 1.45; }
+
+  .wordmark { font-size: 1.9rem; font-weight: 800; letter-spacing: -0.02em; margin-top: 54px; }
+  .wordmark span { color: var(--accent); }
+  .tagline { color: var(--ink-dim); font-size: 0.92rem; margin: 6px 0 32px; line-height: 1.4; }
+
+  .tabs { display: flex; background: var(--surface-2); border-radius: 0; padding: 4px; margin-bottom: 22px; }
+  .tabs button {
+    flex: 1; border: none; background: transparent; padding: 9px; border-radius: 0;
+    font-family: inherit; font-size: 0.85rem; font-weight: 700; color: var(--ink-dim); cursor: pointer;
+  }
+  .tabs button.active { background: var(--surface); color: var(--ink); box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+
+  label.field { display: block; margin-bottom: 14px; }
+  label.field span { display: block; font-size: 0.78rem; font-weight: 600; color: var(--ink-dim); margin-bottom: 6px; }
+  label.field span.field-head { display: flex; justify-content: space-between; align-items: center; }
+  input[type=email], input[type=password], input[type=number], input[type=text] {
+    width: 100%; font-family: inherit; font-size: 0.95rem; padding: 12px 14px;
+    border-radius: 0; border: 1.5px solid var(--border); background: var(--surface); color: var(--ink);
+  }
+  input:focus { border-color: var(--accent); }
+  .unit-toggle {
+    font-family: inherit; font-size: 0.68rem; font-weight: 700; color: var(--accent);
+    background: none; border: none; padding: 0; cursor: pointer;
+    text-decoration: underline; text-underline-offset: 2px;
+  }
+  .unit-group { display: flex; gap: 8px; }
+  .unit-group input { flex: 1; }
+  .custom-input-row { display: flex; gap: 8px; margin: 2px 0 4px; }
+  .custom-input-row input {
+    flex: 1; font-family: inherit; font-size: 0.85rem; padding: 9px 12px;
+    border: 1.5px solid var(--border); background: var(--surface); color: var(--ink); border-radius: 0;
+  }
+  .chip-add-btn {
+    border: 1.5px solid var(--accent); background: var(--accent); color: #1a1006;
+    font-family: inherit; font-weight: 700; font-size: 0.8rem; padding: 8px 14px; cursor: pointer; border-radius: 0;
+  }
+  .chip-custom { border-style: dashed; color: var(--ink-dim); }
+
+  .spacer { flex: 1; }
+
+  .cta {
+    width: 100%; border: none; border-radius: 0; padding: 16px;
+    font-family: inherit; font-size: 1rem; font-weight: 800; cursor: pointer;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #1a1006;
+    box-shadow: 0 10px 24px -10px rgba(232,93,44,.55);
+    transition: transform .12s ease;
+  }
+  .cta:active { transform: scale(0.98); }
+  .cta:disabled { opacity: .4; cursor: not-allowed; box-shadow:none; }
+  .cta-ghost {
+    width: 100%; border: 1.5px solid var(--border); border-radius: 0; padding: 14px;
+    font-family: inherit; font-size: 0.9rem; font-weight: 700; cursor: pointer;
+    background: transparent; color: var(--ink); margin-top: 10px;
+  }
+
+  .progress-dots { display: flex; gap: 6px; margin: 14px 0 4px; }
+  .progress-dots i { flex:1; height: 4px; border-radius: 0; background: var(--border); }
+  .progress-dots i.done { background: var(--accent); }
+
+  .option-card {
+    display: flex; flex-direction: column; text-align: left; gap: 4px;
+    width: 100%; border: 1.5px solid var(--border); background: var(--surface);
+    border-radius: 0; padding: 16px; margin-bottom: 12px; cursor: pointer;
+    font-family: inherit; transition: border-color .15s ease, background .15s ease;
+  }
+  .option-card:hover { border-color: var(--accent-2); }
+  .option-card.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+  .option-card b { font-size: 0.98rem; font-weight: 700; }
+  .option-card small { color: var(--ink-dim); font-size: 0.8rem; line-height: 1.35; }
+
+  .rate-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .rate-chip {
+    flex: 1; border: 1.5px solid var(--border); background: var(--surface); border-radius: 0;
+    padding: 12px 6px; text-align: center; cursor: pointer; font-family: inherit;
+  }
+  .rate-chip b { display:block; font-size: 1rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .rate-chip span { font-size: 0.68rem; color: var(--ink-dim); }
+  .rate-chip.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+
+  .warn-banner {
+    display: none; gap: 8px; align-items: flex-start; background: color-mix(in srgb, var(--warn) 12%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border)); border-radius: 0; padding: 10px 12px;
+    font-size: 0.78rem; color: var(--ink); line-height: 1.4; margin-bottom: 10px;
+  }
+  .warn-banner.show { display: flex; }
+
+  .chip-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    border: 1.5px solid var(--border); background: var(--surface); color: var(--ink);
+    border-radius: 0; padding: 8px 14px; font-size: 0.82rem; font-weight: 600;
+    cursor: pointer; font-family: inherit;
+  }
+  .chip.selected { border-color: var(--accent); background: var(--accent); color: #1a1006; }
+
+  .stepper { display: flex; align-items: center; gap: 14px; }
+  .stepper button {
+    width: 38px; height: 38px; border-radius: 0; border: 1.5px solid var(--border);
+    background: var(--surface); color: var(--ink); font-size: 1.1rem; font-weight: 800; cursor: pointer;
+  }
+  .stepper b { font-size: 1.1rem; font-variant-numeric: tabular-nums; min-width: 20px; text-align: center; }
+
+  .row-2 { display: flex; gap: 10px; }
+  .row-2 > label { flex: 1; }
+  .seg { display: flex; gap: 6px; margin-bottom: 18px; }
+  .seg button {
+    flex: 1; padding: 9px 4px; border-radius: 0; border: 1.5px solid var(--border);
+    background: var(--surface); color: var(--ink); font-family: inherit; font-size: .82rem; font-weight: 700; cursor: pointer;
+  }
+  .seg button.selected { border-color: var(--accent); background: var(--accent); color: #1a1006; }
+
+  /* Dashboard */
+  .db-top { display: flex; justify-content: space-between; align-items: center; padding: 4px 0 6px; }
+  .db-greet small { color: var(--ink-dim); font-size: 0.78rem; font-weight: 600; }
+  .db-greet div { font-weight: 800; font-size: 1.05rem; }
+  .avatar { width: 36px; height: 36px; border-radius: 0; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+
+  .hero-card {
+    position: relative; border-radius: 0; padding: 28px 22px 24px; margin: 14px 0 16px;
+    background: var(--surface); border: 1px solid var(--border);
+  }
+  .hero-glow {
+    position: absolute; width: 160px; height: 160px; border-radius: 50%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent) 55%, transparent) 0%, transparent 70%);
+    top: -20px; right: -20px; filter: blur(6px); pointer-events: none; z-index: 0;
+  }
+  .hero-num { position: relative; z-index: 1; display: flex; align-items: baseline; font-size: clamp(2.6rem,10vw,3.1rem); font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .hero-num sub-unit { font-size: 1rem; font-weight: 700; color: var(--ink-dim); margin-left: 6px; }
+  .hero-label { position: relative; font-size: 0.8rem; color: var(--ink-dim); font-weight: 600; margin-top: 4px; }
+  .hero-explain { position: relative; font-size: 0.78rem; color: var(--ink-dim); margin-top: 12px; line-height: 1.4; }
+
+  .stat-row { display: flex; gap: 10px; margin-bottom: 16px; }
+  .stat-card { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 0; padding: 12px 14px; }
+  .stat-card b { display: block; font-size: 1.25rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .stat-card.good b { color: var(--good); }
+  .stat-card span { font-size: 0.72rem; color: var(--ink-dim); font-weight: 600; }
+
+  .section-label { font-size: 0.85rem; font-weight: 800; margin: 4px 0 10px; }
+
+  .meal-card {
+    display: flex; gap: 12px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 0; padding: 12px; margin-bottom: 10px;
+  }
+  .meal-card.needs-attention {
+    border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+    border-left: 4px solid var(--warn);
+    background: color-mix(in srgb, var(--warn) 7%, var(--surface));
+  }
+  .meal-thumb {
+    position: relative;
+    width: 52px; height: 52px; border-radius: 0; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent-2), var(--accent));
+  }
+  .alert-dot {
+    position: absolute; top: -5px; right: -5px; width: 15px; height: 15px;
+    background: var(--warn); border: 2px solid var(--bg);
+  }
+  .meal-info { flex: 1; min-width: 0; }
+  .meal-info b { font-size: 0.88rem; font-weight: 700; display:block; }
+  .meal-meta { font-size: 0.72rem; color: var(--ink-dim); margin-top: 2px; }
+  .meal-kcal { font-weight: 800; font-size: 0.92rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .attention-row {
+    display: flex; align-items: center; gap: 6px; margin-top: 7px; padding: 7px 9px;
+    background: color-mix(in srgb, var(--warn) 16%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
+    font-size: 0.74rem; font-weight: 700; color: var(--warn); line-height: 1.3;
+  }
+  .attention-row svg { flex-shrink: 0; }
+
+  .alert-banner {
+    display: flex; gap: 10px; align-items: flex-start;
+    background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
+    border-left: 4px solid var(--warn);
+    padding: 12px 14px; margin-bottom: 16px;
+  }
+  .alert-banner svg { flex-shrink: 0; margin-top: 2px; color: var(--warn); }
+  .alert-banner b { display: block; font-size: 0.84rem; font-weight: 800; color: var(--ink); }
+  .alert-banner span { font-size: 0.74rem; color: var(--ink-dim); line-height: 1.35; }
+
+  .navbar {
+    display: flex; border-top: 1px solid var(--border); background: var(--surface);
+    padding: 10px 6px calc(env(safe-area-inset-bottom, 0px) + 10px);
+  }
+  .navbar .nitem { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .navbar .nitem svg { opacity: .35; }
+  .navbar .nitem span { font-size: 0.62rem; font-weight: 700; color: var(--ink-dim); opacity: .5; }
+  .navbar .nitem.on svg { opacity: 1; }
+  .navbar .nitem.on span { opacity: 1; color: var(--ink); }
+  .navbar .nitem.on svg path, .navbar .nitem.on svg circle { stroke: var(--accent); }
+
+  .hint { font-size: 0.72rem; color: var(--ink-dim); text-align: center; max-width: 390px; line-height: 1.5; }
+</style>
+
+<div class="toolbar">
+  <span class="toolbar-title">TruPlate walkthrough</span>
+  <button class="pill-btn" data-go="auth">1 Auth</button>
+  <button class="pill-btn" data-go="goal">2 Goal</button>
+  <button class="pill-btn" data-go="rate">3 Rate</button>
+  <button class="pill-btn" data-go="activity">4 Activity</button>
+  <button class="pill-btn" data-go="stats">5 Stats</button>
+  <button class="pill-btn" data-go="dashboard">6 Dashboard</button>
+</div>
+<div class="toolbar">
+  <button class="pill-btn" id="themeLight">☀ Light</button>
+  <button class="pill-btn" id="themeDark">● Dark</button>
+</div>
+
+<div class="frame-wrap">
+  <div class="device">
+    <div class="notch"></div>
+    <div class="screen-port">
+      <div class="statusbar">
+        <span id="clock">9:41</span>
+        <span class="icons">
+          <span class="sig-bars"><span></span><span></span><span></span><span></span></span>
+          <span class="batt"><span class="batt-fill"></span></span>
+        </span>
+      </div>
+
+      <div class="screens">
+
+        <!-- AUTH -->
+        <section class="screen" id="screen-auth">
+          <div class="wordmark">Tru<span>Plate</span></div>
+          <div class="tagline">Log meals. Know your macros. Actually improve.</div>
+          <div class="tabs">
+            <button class="active" data-tab="signup">Sign up</button>
+            <button data-tab="login">Log in</button>
+          </div>
+          <label class="field"><span>Email</span><input type="email" placeholder="you@example.com" value="shivaths@example.com"></label>
+          <label class="field"><span>Password</span><input type="password" placeholder="••••••••" value="••••••••"></label>
+          <div class="spacer"></div>
+          <button class="cta" data-go="goal">Create account</button>
+          <p class="hint" style="margin-top:10px">Continuing starts onboarding — one question per screen.</p>
+        </section>
+
+        <!-- GOAL -->
+        <section class="screen" id="screen-goal">
+          <div class="progress-dots"><i class="done"></i><i></i><i></i><i></i></div>
+          <div class="eyebrow">Step 1 of 4</div>
+          <h1 class="headline">What's your goal?</h1>
+          <p class="sub">This sets your starting calorie and protein targets. You can change it later.</p>
+
+          <button class="option-card" data-goal="lose">
+            <b>Lose weight</b>
+            <small>Steady fat loss while holding onto the muscle you have.</small>
+          </button>
+          <button class="option-card selected" data-goal="gain">
+            <b>Gain weight (muscle)</b>
+            <small>Build muscle with a calorie surplus. Some fat gain comes with it.</small>
+          </button>
+          <button class="option-card" data-goal="recomp">
+            <b>Body recomposition</b>
+            <small>Lose fat and build muscle at once — slower by nature, but no bulk-then-cut needed.</small>
+          </button>
+
+          <div class="spacer"></div>
+          <button class="cta" data-go="rate">Continue</button>
+        </section>
+
+        <!-- RATE -->
+        <section class="screen" id="screen-rate">
+          <div class="progress-dots"><i class="done"></i><i class="done"></i><i></i><i></i></div>
+          <div class="eyebrow">Step 2 of 4</div>
+          <h1 class="headline">How aggressively?</h1>
+          <p class="sub" id="rateSub">Faster gains mean more fat comes along with the muscle.</p>
+
+          <div class="rate-row" id="rateRow"></div>
+          <div class="warn-banner" id="rateWarn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;margin-top:2px;color:var(--warn)"><path d="M12 3l10 18H2z"/><path d="M12 10v4"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/></svg> <span>Fastest pace — more fat gain will come with the muscle. You can dial this back anytime.</span></div>
+
+          <div class="spacer"></div>
+          <button class="cta" data-go="activity">Continue</button>
+        </section>
+
+        <!-- ACTIVITY -->
+        <section class="screen" id="screen-activity">
+          <div class="progress-dots"><i class="done"></i><i class="done"></i><i class="done"></i><i></i></div>
+          <div class="eyebrow">Step 3 of 4</div>
+          <h1 class="headline">Training &amp; activity</h1>
+          <p class="sub">Used to estimate your daily energy burn.</p>
+
+          <label class="field"><span>Training days per week</span></label>
+          <div class="stepper" style="margin-bottom:14px">
+            <button id="gymMinus">−</button>
+            <b id="gymDays">5</b>
+            <button id="gymPlus">+</button>
+          </div>
+          <label class="field"><span>What kind of training? (optional)</span>
+            <input type="text" id="inTrainingType" placeholder="e.g. gym, running, swimming, dance, sports league...">
+          </label>
+
+          <label class="field"><span>Non-training activity level</span></label>
+          <div class="option-card" data-activity="sedentary" style="padding:12px 14px"><b>Sedentary</b><small>Desk job, little walking</small></div>
+          <div class="option-card" data-activity="light" style="padding:12px 14px"><b>Light</b><small>Some walking, light chores</small></div>
+          <div class="option-card selected" data-activity="moderate" style="padding:12px 14px"><b>Moderate</b><small>On your feet a lot, casual sports</small></div>
+          <div class="option-card" data-activity="active" style="padding:12px 14px"><b>Active</b><small>Physical job or daily exercise</small></div>
+          <div class="option-card" data-activity="very_active" style="padding:12px 14px"><b>Very active</b><small>Physical job + hard training</small></div>
+
+          <div class="spacer"></div>
+          <button class="cta" data-go="stats">Continue</button>
+        </section>
+
+        <!-- STATS -->
+        <section class="screen" id="screen-stats">
+          <div class="progress-dots"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i></div>
+          <div class="eyebrow">Step 4 of 4</div>
+          <h1 class="headline">Stats &amp; preferences</h1>
+          <p class="sub">Cuisines and exclusions shape every meal photo you log.</p>
+
+          <div class="row-2">
+            <label class="field">
+              <span class="field-head">Height <button type="button" class="unit-toggle" data-toggle="height">cm</button></span>
+              <div class="unit-group" id="heightImperial">
+                <input type="number" id="inHeightFt" value="5" min="0" max="8" placeholder="ft">
+                <input type="number" id="inHeightIn" value="10.5" min="0" max="11.5" step="0.5" placeholder="in">
+              </div>
+              <input type="number" id="inHeightCm" value="179" style="display:none">
+            </label>
+            <label class="field">
+              <span class="field-head">Weight <button type="button" class="unit-toggle" data-toggle="weight">kg</button></span>
+              <input type="number" id="inWeightLb" value="148">
+              <input type="number" id="inWeightKg" value="67" style="display:none">
+            </label>
+          </div>
+          <div class="row-2">
+            <label class="field"><span>Age</span><input type="number" id="inAge" value="20"></label>
+            <label class="field"><span>Sex</span></label>
+          </div>
+          <div class="seg" id="sexSeg">
+            <button class="selected" data-sex="male">Male</button>
+            <button data-sex="female">Female</button>
+          </div>
+
+          <label class="field"><span>Cuisines you eat</span></label>
+          <div class="chip-grid" id="cuisineChips" style="margin-bottom:6px">
+            <button class="chip selected" data-chip="South Indian">South Indian</button>
+            <button class="chip" data-chip="North Indian">North Indian</button>
+            <button class="chip" data-chip="Mexican">Mexican</button>
+            <button class="chip" data-chip="Italian">Italian</button>
+            <button class="chip" data-chip="Chinese">Chinese</button>
+            <button class="chip" data-chip="Thai">Thai</button>
+            <button class="chip" data-chip="Japanese">Japanese</button>
+            <button class="chip" data-chip="Korean">Korean</button>
+            <button class="chip" data-chip="Mediterranean">Mediterranean</button>
+            <button class="chip" data-chip="Middle Eastern">Middle Eastern</button>
+            <button class="chip" data-chip="Ethiopian">Ethiopian</button>
+            <button class="chip" data-chip="Vietnamese">Vietnamese</button>
+            <button class="chip" data-chip="Caribbean">Caribbean</button>
+            <button class="chip" data-chip="Southern / soul food">Southern / soul food</button>
+            <button class="chip" data-chip="Greek">Greek</button>
+            <button class="chip chip-custom" id="cuisineCustomBtn" type="button">+ Custom</button>
+          </div>
+          <div class="custom-input-row" id="cuisineCustomInput" style="display:none">
+            <input type="text" id="cuisineCustomText" placeholder="Type a cuisine...">
+            <button type="button" class="chip-add-btn" id="cuisineCustomAdd">Add</button>
+          </div>
+
+          <label class="field" style="margin-top:16px"><span>Exclusions &amp; allergies</span></label>
+          <div class="chip-grid" id="exclusionChips" style="margin-bottom:6px">
+            <button class="chip selected" data-chip="Seafood">Seafood</button>
+            <button class="chip" data-chip="Shellfish">Shellfish</button>
+            <button class="chip" data-chip="Dairy">Dairy</button>
+            <button class="chip" data-chip="Eggs">Eggs</button>
+            <button class="chip" data-chip="Peanuts">Peanuts</button>
+            <button class="chip" data-chip="Tree nuts">Tree nuts</button>
+            <button class="chip" data-chip="Gluten">Gluten</button>
+            <button class="chip" data-chip="Soy">Soy</button>
+            <button class="chip" data-chip="Pork">Pork</button>
+            <button class="chip" data-chip="Beef">Beef</button>
+            <button class="chip" data-chip="Sesame">Sesame</button>
+            <button class="chip" data-chip="Alcohol">Alcohol</button>
+            <button class="chip chip-custom" id="exclusionCustomBtn" type="button">+ Custom</button>
+          </div>
+          <div class="custom-input-row" id="exclusionCustomInput" style="display:none">
+            <input type="text" id="exclusionCustomText" placeholder="Type an allergy or exclusion...">
+            <button type="button" class="chip-add-btn" id="exclusionCustomAdd">Add</button>
+          </div>
+          <p class="hint" style="text-align:left;max-width:none;margin:8px 0 0">Custom entries go straight into the vision AI's prompt too — not just a local label.</p>
+
+          <div class="spacer"></div>
+          <button class="cta" data-go="dashboard">See my targets</button>
+        </section>
+
+        <!-- DASHBOARD -->
+        <section class="screen" id="screen-dashboard">
+          <div class="db-top">
+            <div class="db-greet"><small>Today</small><div>Sat, Jul 12</div></div>
+            <div class="avatar"></div>
+          </div>
+
+          <div class="hero-card">
+            <div class="hero-glow"></div>
+            <div class="hero-num"><span id="dbKcal">2759</span><sub-unit>kcal target</sub-unit></div>
+            <div class="hero-explain" id="dbExplain">Maintenance is about 2759 kcal/day; targeting 2759 kcal and 121g protein for your gain goal.</div>
+          </div>
+
+          <div class="stat-row">
+            <div class="stat-card good"><b id="dbRemaining">1,519</b><span>kcal remaining</span></div>
+            <div class="stat-card"><b id="dbProtein">121g</b><span>protein target</span></div>
+          </div>
+
+          <div class="alert-banner">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 3l10 18H2z"/><path d="M12 10v4"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/></svg>
+            <div><b>1 meal needs a quick check</b><span>Answering takes 5 seconds and can change your total by ±120 kcal.</span></div>
+          </div>
+
+          <div class="section-label">Recent meals</div>
+          <div class="meal-card needs-attention">
+            <div class="meal-thumb"><span class="alert-dot"></span></div>
+            <div class="meal-info">
+              <b>Masala dosa, sambar &amp; coconut chutney</b>
+              <div class="meal-meta">610 kcal (est.) · 16g protein · 86% match</div>
+              <div class="attention-row">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 3l10 18H2z"/><path d="M12 10v4"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/></svg>
+                <span>How much ghee or oil? Could swing ±120 kcal — tap to answer</span>
+              </div>
+            </div>
+          </div>
+          <div class="meal-card">
+            <div class="meal-thumb" style="background:linear-gradient(135deg,#8B5E3C,#C99A5B)"></div>
+            <div class="meal-info">
+              <b>Chipotle bowl, chicken</b>
+              <div class="meal-meta">630 kcal · 44g protein · logged</div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <div class="navbar">
+        <div class="nitem on"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 12l8-8 8 8M6 10v10h12V10" stroke="currentColor"/></svg><span>Today</span></div>
+        <div class="nitem"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="9" stroke="currentColor"/><path d="M12 8v4l3 2" stroke="currentColor"/></svg><span>Log</span></div>
+        <div class="nitem"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M12 3l2.5 5 5.5.8-4 3.9.9 5.5L12 15.8 7.1 18.2l.9-5.5-4-3.9L9.5 8z" stroke="currentColor"/></svg><span>Coach</span></div>
+        <div class="nitem"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M6 3v9a3 3 0 006 0V3M18 3v18M18 3a4 4 0 00-4 4v3h4" stroke="currentColor"/></svg><span>Foodie</span></div>
+        <div class="nitem"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="8" r="4" stroke="currentColor"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6" stroke="currentColor"/></svg><span>Profile</span></div>
+      </div>
+    </div>
+  </div>
+  <p class="hint">Numbers on the Dashboard are computed live from Onboarding answers, using the same Mifflin-St Jeor formula as <code>api/targets.py</code>.</p>
+</div>
+
+<script>
+(function(){
+  var ACTIVITY = { sedentary:1.2, light:1.375, moderate:1.55, active:1.725, very_active:1.9 };
+  var PROTEIN_PER_KG = { lose:2.2, recomp:2.0, gain:1.8 };
+  var RATE_OPTIONS = {
+    lose: [0.5, 1.0, 1.5],
+    gain: [0.25, 0.5],
+    recomp: [0]
+  };
+  var state = { goal:'gain', rate:0.5, gymDays:5, activity:'moderate', sex:'male', height:179, weight:67, age:20 };
+
+  var screens = ['auth','goal','rate','activity','stats','dashboard'];
+  function show(id){
+    screens.forEach(function(s){
+      document.getElementById('screen-'+s).classList.toggle('active', s===id);
+    });
+    document.querySelectorAll('.pill-btn[data-go]').forEach(function(b){
+      b.classList.toggle('active', b.dataset.go===id);
+    });
+    if (id === 'dashboard') renderDashboard();
+    if (id === 'rate') renderRate();
+  }
+  document.querySelectorAll('[data-go]').forEach(function(el){
+    el.addEventListener('click', function(){ show(el.dataset.go); });
+  });
+  show('auth');
+
+  // Auth tabs
+  document.querySelectorAll('.tabs button').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('.tabs button').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+    });
+  });
+
+  // Goal selection
+  document.querySelectorAll('[data-goal]').forEach(function(card){
+    card.addEventListener('click', function(){
+      document.querySelectorAll('[data-goal]').forEach(function(c){ c.classList.remove('selected'); });
+      card.classList.add('selected');
+      state.goal = card.dataset.goal;
+      state.rate = RATE_OPTIONS[state.goal][0];
+    });
+  });
+
+  // Rate row (rendered dynamically per goal)
+  function renderRate(){
+    var row = document.getElementById('rateRow');
+    row.innerHTML = '';
+    var opts = RATE_OPTIONS[state.goal];
+    var goalWord = state.goal === 'lose' ? 'Faster cuts' : 'Faster bulks';
+    document.getElementById('rateSub').textContent = state.goal === 'recomp'
+      ? 'Recomp targets maintenance calories — no rate to set.'
+      : (state.goal === 'lose' ? 'Faster cuts mean more muscle loss along with fat.' : 'Faster bulks mean more fat gain along with muscle.');
+
+    opts.forEach(function(r){
+      var chip = document.createElement('button');
+      chip.className = 'rate-chip' + (r === state.rate ? ' selected' : '');
+      chip.innerHTML = '<b>' + (r === 0 ? '—' : r) + '</b><span>' + (r===0 ? 'maintenance' : 'lb/week') + '</span>';
+      chip.addEventListener('click', function(){
+        state.rate = r;
+        renderRate();
+        var isMax = r === opts[opts.length-1] && r !== 0;
+        document.getElementById('rateWarn').classList.toggle('show', isMax);
+        document.getElementById('rateWarn').querySelector('span').textContent =
+          goalWord + ' mean more ' + (state.goal==='lose' ? 'muscle loss along with the fat' : 'fat gain along with the muscle') + '. You can dial this back anytime.';
+      });
+      row.appendChild(chip);
+    });
+  }
+
+  // Activity
+  document.querySelectorAll('[data-activity]').forEach(function(card){
+    card.addEventListener('click', function(){
+      document.querySelectorAll('[data-activity]').forEach(function(c){ c.classList.remove('selected'); });
+      card.classList.add('selected');
+      state.activity = card.dataset.activity;
+    });
+  });
+  document.getElementById('gymMinus').addEventListener('click', function(){
+    state.gymDays = Math.max(0, state.gymDays-1);
+    document.getElementById('gymDays').textContent = state.gymDays;
+  });
+  document.getElementById('gymPlus').addEventListener('click', function(){
+    state.gymDays = Math.min(7, state.gymDays+1);
+    document.getElementById('gymDays').textContent = state.gymDays;
+  });
+
+  // Stats screen — age (plain), height/weight (unit-aware, canonical state stays cm/kg
+  // to match api/targets.py's Mifflin-St Jeor inputs regardless of displayed unit)
+  document.getElementById('inAge').addEventListener('input', function(e){
+    state.age = Number(e.target.value) || 0;
+  });
+
+  function cmToFtIn(cm){
+    var totalIn = cm / 2.54;
+    var ft = Math.floor(totalIn / 12);
+    var inch = Math.round((totalIn - ft*12) * 2) / 2;
+    return { ft: ft, inch: inch };
+  }
+  var ftEl = document.getElementById('inHeightFt'), inEl = document.getElementById('inHeightIn'),
+      cmEl = document.getElementById('inHeightCm'), lbEl = document.getElementById('inWeightLb'),
+      kgEl = document.getElementById('inWeightKg');
+
+  function updateHeightFromImperial(){
+    state.height = (Number(ftEl.value||0)*12 + Number(inEl.value||0)) * 2.54;
+    cmEl.value = Math.round(state.height);
+  }
+  ftEl.addEventListener('input', updateHeightFromImperial);
+  inEl.addEventListener('input', updateHeightFromImperial);
+  cmEl.addEventListener('input', function(e){
+    state.height = Number(e.target.value) || 0;
+    var fi = cmToFtIn(state.height);
+    ftEl.value = fi.ft; inEl.value = fi.inch;
+  });
+
+  lbEl.addEventListener('input', function(e){
+    state.weight = (Number(e.target.value) || 0) * 0.453592;
+    kgEl.value = Math.round(state.weight);
+  });
+  kgEl.addEventListener('input', function(e){
+    state.weight = Number(e.target.value) || 0;
+    lbEl.value = Math.round(state.weight / 0.453592);
+  });
+
+  document.querySelectorAll('.unit-toggle').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      if (btn.dataset.toggle === 'height') {
+        var toCm = document.getElementById('heightImperial').style.display !== 'none';
+        document.getElementById('heightImperial').style.display = toCm ? 'none' : 'flex';
+        cmEl.style.display = toCm ? 'block' : 'none';
+        btn.textContent = toCm ? 'ft/in' : 'cm';
+      } else {
+        var toKg = lbEl.style.display !== 'none';
+        lbEl.style.display = toKg ? 'none' : 'block';
+        kgEl.style.display = toKg ? 'block' : 'none';
+        btn.textContent = toKg ? 'lb' : 'kg';
+      }
+    });
+  });
+
+  document.getElementById('inTrainingType').addEventListener('input', function(e){
+    state.trainingType = e.target.value;
+  });
+
+  document.querySelectorAll('#sexSeg button').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('#sexSeg button').forEach(function(x){ x.classList.remove('selected'); });
+      b.classList.add('selected');
+      state.sex = b.dataset.sex;
+    });
+  });
+  document.querySelectorAll('.chip:not(.chip-custom)').forEach(function(c){
+    c.addEventListener('click', function(){ c.classList.toggle('selected'); });
+  });
+
+  // "+ Custom" chip: reveal a text input, add whatever's typed as a new selected chip
+  function wireCustomChip(gridId, btnId, rowId, textId, addId){
+    var grid = document.getElementById(gridId), addBtn = document.getElementById(btnId);
+    document.getElementById(btnId).addEventListener('click', function(){
+      document.getElementById(rowId).style.display = 'flex';
+      document.getElementById(textId).focus();
+    });
+    function addCustom(){
+      var txt = document.getElementById(textId).value.trim();
+      if (!txt) return;
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip selected';
+      chip.textContent = txt;
+      chip.dataset.chip = txt;
+      chip.addEventListener('click', function(){ chip.classList.toggle('selected'); });
+      grid.insertBefore(chip, addBtn);
+      document.getElementById(textId).value = '';
+      document.getElementById(rowId).style.display = 'none';
+    }
+    document.getElementById(addId).addEventListener('click', addCustom);
+    document.getElementById(textId).addEventListener('keydown', function(e){
+      if (e.key === 'Enter') { e.preventDefault(); addCustom(); }
+    });
+  }
+  wireCustomChip('cuisineChips','cuisineCustomBtn','cuisineCustomInput','cuisineCustomText','cuisineCustomAdd');
+  wireCustomChip('exclusionChips','exclusionCustomBtn','exclusionCustomInput','exclusionCustomText','exclusionCustomAdd');
+
+  // Same formula as api/targets.py
+  function calcTargets(p){
+    var bmr = p.sex === 'male'
+      ? 10*p.weight + 6.25*p.height - 5*p.age + 5
+      : 10*p.weight + 6.25*p.height - 5*p.age - 161;
+    var tdee = bmr * ACTIVITY[p.activity];
+    var kcal = p.goal === 'gain' ? tdee + p.rate*500
+             : p.goal === 'lose' ? tdee - p.rate*500
+             : tdee;
+    var protein = p.weight * PROTEIN_PER_KG[p.goal];
+    return { bmr:bmr, tdee:tdee, kcal:kcal, protein:protein };
+  }
+
+  function renderDashboard(){
+    var r = calcTargets(state);
+    document.getElementById('dbKcal').textContent = Math.round(r.kcal).toLocaleString();
+    document.getElementById('dbProtein').textContent = Math.round(r.protein) + 'g';
+    document.getElementById('dbRemaining').textContent = Math.max(0, Math.round(r.kcal - 1240)).toLocaleString();
+    document.getElementById('dbExplain').textContent =
+      'Maintenance is about ' + Math.round(r.tdee) + ' kcal/day; targeting ' + Math.round(r.kcal) +
+      ' kcal and ' + Math.round(r.protein) + 'g protein for your ' + state.goal + ' goal.';
+  }
+
+  renderRate();
+
+  // Theme toggle
+  document.getElementById('themeDark').addEventListener('click', function(){
+    document.documentElement.setAttribute('data-theme','dark');
+  });
+  document.getElementById('themeLight').addEventListener('click', function(){
+    document.documentElement.setAttribute('data-theme','light');
+  });
+
+  // Live clock in status bar
+  function tick(){
+    var d = new Date();
+    var h = d.getHours() % 12 || 12;
+    var m = String(d.getMinutes()).padStart(2,'0');
+    document.getElementById('clock').textContent = h + ':' + m;
+  }
+  tick(); setInterval(tick, 15000);
+})();
+</script>
