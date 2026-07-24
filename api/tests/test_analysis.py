@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+import requests
 
 from analysis import (
     FAT_OPTIONS,
@@ -63,6 +64,18 @@ def test_item_priced_from_usda_not_from_llm():
     assert resolved[0].kcal == pytest.approx(140.8, abs=1)
 
 
+def test_usda_outage_degrades_to_the_llm_estimate():
+    # USDA allows 1000 requests/hour and a meal spends one per item, so an
+    # outage or rate-limit is a question of when. It must cost the meal its
+    # precision, not the whole log.
+    def broken_search(query, page_size=25):
+        raise requests.ConnectionError("USDA unreachable")
+
+    resolved = resolve_items(analysis_with([vision_item()]), search=broken_search)
+    assert resolved[0].source == "llm"
+    assert resolved[0].kcal == pytest.approx(200.0)
+
+
 def test_falls_back_to_llm_estimate_when_usda_has_no_match():
     resolved = resolve_items(
         analysis_with([vision_item(name="rasam", usda_query="rasam", grams=200)]),
@@ -106,6 +119,19 @@ def test_fat_question_wording_matches_its_options():
         "affects_items": ["sambar", "chutney"], "reason": "hidden_fat", "kcal_impact": "",
     }]))
     assert questions[0]["question"] == "How much oil or ghee went into the sambar and chutney?"
+
+
+def test_portion_question_shows_the_real_kcal_swing():
+    # "changes this item's portion" tells the user nothing; halving or doubling
+    # moves the meal by that item's own calories.
+    questions = canonical_questions(analysis_with(
+        [vision_item(name="idli", llm_estimate={
+            "calories": 180.0, "protein_g": 5.0, "carbs_g": 40.0, "fat_g": 1.0})],
+        [{"id": "q1", "question": "?", "options": [], "affects_items": ["idli"],
+          "reason": "portion", "kcal_impact": ""}],
+    ))
+    assert questions[0]["kcal_impact"] == "+/- 180 kcal"
+    assert questions[0]["question"] == "How much idli was there?"
 
 
 def test_identification_questions_are_dropped_not_asked():

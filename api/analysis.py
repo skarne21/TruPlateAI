@@ -6,6 +6,7 @@ costs). All arithmetic here is deterministic Python -- CLAUDE.md invariant #10.
 
 from typing import Callable
 
+import requests
 from pydantic import BaseModel
 
 import usda
@@ -67,8 +68,19 @@ class ResolvedItem(BaseModel):
 def _priced_from_usda(
     query: str, grams: float, search: Search, expected_kcal_per_100g: float | None = None
 ) -> tuple[dict, dict] | None:
-    """Look a food up and scale it, or None if USDA can't price it."""
-    match = usda.pick_best_match(search(query), expected_kcal_per_100g)
+    """Look a food up and scale it, or None if USDA can't price it.
+
+    A USDA outage or rate-limit degrades to the model's estimate for that item
+    (already labelled "AI estimate" in the UI) rather than failing the whole
+    meal. USDA allows 1000 requests/hour and a meal spends one per item, so
+    this is a question of when, not if.
+    """
+    try:
+        results = search(query)
+    except requests.RequestException:
+        return None
+
+    match = usda.pick_best_match(results, expected_kcal_per_100g)
     if match is None:
         return None
     macros = usda.macros_for_grams(match, grams)
@@ -159,8 +171,15 @@ def canonical_questions(analysis: VisionAnalysis) -> list[dict]:
             text = f"How much oil or ghee went into the {_join(question.affects_items)}?"
         else:
             options = PORTION_OPTIONS
-            impact = "changes this item's portion"
-            text = f"How much {_join(question.affects_items)} was it?"
+            # Show the real swing rather than "changes this item's portion":
+            # halving or doubling moves the meal by this item's own calories.
+            affected = sum(
+                item.llm_estimate.calories
+                for item in analysis.items
+                if item.name in question.affects_items
+            )
+            impact = f"+/- {affected:.0f} kcal" if affected else "changes this item's portion"
+            text = f"How much {_join(question.affects_items)} was there?"
 
         questions.append({
             "id": question.id,

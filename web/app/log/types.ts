@@ -49,7 +49,8 @@ export type UsdaCandidate = {
   protein_per_100g: number | null;
 };
 
-export type FatAnswer = { fat_name: string; grams: number | null; confidence: number };
+/** `fat_name` is null when the photo contained no cooking fat at all. */
+export type FatAnswer = { fat_name: string | null; grams: number | null; confidence: number };
 
 /** Anything below this is shown as "worth a look" rather than stated as fact. */
 export const LOW_CONFIDENCE = 0.7;

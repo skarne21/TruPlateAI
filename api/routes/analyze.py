@@ -1,3 +1,4 @@
+import requests
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
@@ -138,8 +139,15 @@ class UsdaCandidate(BaseModel):
 @router.get("/usda/search", response_model=list[UsdaCandidate])
 def usda_search(query: str, user=Depends(get_current_user_client)):
     """Candidate foods for the add/rename-item flow on the confirm screen."""
+    try:
+        foods = usda.search_food(query)
+    except requests.RequestException as e:
+        # Raised as a real HTTPException so the response keeps its CORS headers
+        # and the browser sees 502 rather than a phantom CORS failure.
+        raise HTTPException(502, f"USDA lookup is unavailable right now: {e}")
+
     candidates = []
-    for food in usda.search_food(query):
+    for food in foods:
         if food.get("dataType") == "Branded":
             continue
         macros = usda.macros_for_grams(food, 100)

@@ -7,6 +7,7 @@ The model identifies foods and portions only. Macro numbers come from USDA
 import os
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel, ValidationError
 
@@ -14,7 +15,25 @@ MODEL = "gemini-2.5-flash"
 
 
 class VisionError(Exception):
-    """Gemini returned output we could not validate, twice."""
+    """Gemini could not be reached, or returned output we couldn't validate."""
+
+
+def _generate(client: genai.Client, contents: list, config) -> types.GenerateContentResponse:
+    """Call Gemini, turning transport failures into VisionError.
+
+    Gemini answers 503 UNAVAILABLE whenever the model is busy. Left unhandled
+    that escapes the route as a bare 500 -- and because Starlette's error
+    handler sits OUTSIDE CORSMiddleware, the response carries no CORS headers
+    and the browser reports a misleading "blocked by CORS policy" instead of
+    the real cause. Every Gemini call goes through here so neither caller can
+    reintroduce that.
+    """
+    try:
+        return client.models.generate_content(model=MODEL, contents=contents, config=config)
+    except genai_errors.ServerError as exc:
+        raise VisionError("The AI service is busy right now. Try again in a moment.") from exc
+    except genai_errors.APIError as exc:
+        raise VisionError(f"The AI service rejected that request: {exc}") from exc
 
 
 class Portion(BaseModel):
@@ -60,8 +79,11 @@ class VisionAnalysis(BaseModel):
 class FatAnswer(BaseModel):
     """A hidden-fat question answered with a photo instead of a tapped option."""
 
-    fat_name: str  # becomes the usda_query, e.g. "ghee", "olive oil", "butter"
-    grams: float | None  # null when the photo shows the type but not the amount
+    # None when the photo contains no cooking fat at all. Without an explicit
+    # "not found" signal the model writes its refusal into the name and the UI
+    # renders "Found no fat detected in your photo".
+    fat_name: str | None  # becomes the usda_query, e.g. "ghee", "olive oil"
+    grams: float | None  # None when the photo shows the type but not the amount
     confidence: float
 
 
@@ -173,11 +195,7 @@ def analyze_meal(
     last_error = ""
 
     for attempt in range(2):
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=_build_contents(attempt_prompt, images),
-            config=config,
-        )
+        response = _generate(client, _build_contents(attempt_prompt, images), config)
 
         if isinstance(response.parsed, VisionAnalysis):
             return response.parsed
@@ -206,6 +224,11 @@ Identify the specific fat as `fat_name` (e.g. "ghee", "olive oil", "butter",
 "coconut oil"). Use a plain generic name suitable for a USDA food search, not a
 brand name.
 
+If the photo contains no cooking fat at all -- it shows something else
+entirely, or nothing recognisable -- return null for `fat_name`. Return null,
+never a sentence explaining that you found nothing: the field is a food name
+and the app displays it as one.
+
 Estimate `grams` ONLY if the photo actually shows an AMOUNT -- oil in a
 measuring spoon, a visible pour, a coating in a pan. If it only shows a
 container, so you can tell what the fat is but not how much was used, return
@@ -228,10 +251,10 @@ def identify_fat_from_photo(
     """
     client = client or genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=[types.Part.from_bytes(data=image, mime_type=mime_type), FAT_PHOTO_PROMPT],
-        config=types.GenerateContentConfig(
+    response = _generate(
+        client,
+        [types.Part.from_bytes(data=image, mime_type=mime_type), FAT_PHOTO_PROMPT],
+        types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=FatAnswer,
         ),

@@ -82,10 +82,15 @@ export default function ReviewStep({
       if (!res.ok) throw new Error(`Couldn't read that photo (${res.status})`);
       const fat: FatAnswer = await res.json();
 
+      if (!fat.fat_name) {
+        setError("Couldn't spot any oil or butter in that photo — pick an amount below.");
+        setBusy(false);
+        return;
+      }
       if (fat.grams === null) {
         // The photo showed what the fat is but not how much. Keep asking the
         // amount rather than inventing one.
-        setIdentifiedFat((prev) => ({ ...prev, [question.id]: fat.fat_name }));
+        setIdentifiedFat((prev) => ({ ...prev, [question.id]: fat.fat_name! }));
         setBusy(false);
         return;
       }

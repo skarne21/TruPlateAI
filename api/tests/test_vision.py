@@ -1,4 +1,5 @@
 import pytest
+from google.genai import errors as genai_errors
 from pydantic import ValidationError
 
 from vision import (
@@ -157,3 +158,44 @@ def test_fat_photo_may_return_no_amount():
 
 def test_fat_photo_prompt_forbids_guessing_the_amount():
     assert "do not guess" in FAT_PHOTO_PROMPT.lower()
+
+
+class BoomClient(FakeClient):
+    def __init__(self, exc):
+        super().__init__([])
+        self._exc = exc
+
+    def generate_content(self, **kwargs):
+        self.calls.append(kwargs)
+        raise self._exc
+
+
+def _server_error():
+    return genai_errors.ServerError(
+        503, {"error": {"message": "This model is currently experiencing high demand."}}
+    )
+
+
+def test_gemini_outage_becomes_vision_error_not_a_bare_500():
+    # A raw ServerError escapes past CORSMiddleware, so the browser reports a
+    # phantom "blocked by CORS policy" instead of the real cause.
+    with pytest.raises(VisionError, match="busy"):
+        analyze_meal("prompt", client=BoomClient(_server_error()))
+
+
+def test_gemini_outage_on_fat_photo_becomes_vision_error():
+    with pytest.raises(VisionError, match="busy"):
+        identify_fat_from_photo(b"img", "image/jpeg", client=BoomClient(_server_error()))
+
+
+def test_fat_photo_can_report_no_fat_at_all():
+    # Without a null option the model writes its refusal into the name and the
+    # UI renders "Found no fat detected in your photo".
+    client = FakeClient([FakeResponse(
+        parsed=FatAnswer(fat_name=None, grams=None, confidence=0.9)
+    )])
+    assert identify_fat_from_photo(b"img", "image/jpeg", client=client).fat_name is None
+
+
+def test_fat_photo_prompt_asks_for_null_not_a_sentence():
+    assert "null" in FAT_PHOTO_PROMPT.lower()
