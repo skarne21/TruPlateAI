@@ -1,0 +1,55 @@
+# ── Secrets — never commit these ──────────────────────────
+.env
+.env.*
+!.env.example
+!.env.local.example
+web/.env.local
+api/.env
+
+# ── Claude working docs — local only, not published ──────
+CLAUDE.md
+docs/project-plan.md
+docs/vision-prompt.md
+docs/phase-0-checklist.md
+
+# ── Node / Next.js (web/) ─────────────────────────────────
+node_modules/
+web/.next/
+web/out/
+web/build/
+*.tsbuildinfo
+next-env.d.ts
+.vercel/
+
+# ── Python / FastAPI (api/) ───────────────────────────────
+api/.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── Test & eval artifacts ─────────────────────────────────
+api/scripts/test_meal.jpg
+eval/photos/
+eval/results/*.local.*
+
+# ── OS junk ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editors ───────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# ── Logs & misc ───────────────────────────────────────────
+*.log
+npm-debug.log*
+.supabase/
+docker-compose.override.yml
