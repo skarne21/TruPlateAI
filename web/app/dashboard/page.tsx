@@ -3,35 +3,42 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { apiFetch } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
 
-type TargetsResult = {
-  bmr: number;
-  tdee: number;
-  kcal_target: number;
-  protein_g: number;
-  explanation: string;
+type DayTotals = {
+  date: string;
+  consumed: Record<string, number>;
+  targets: Record<string, number>;
+  remaining: Record<string, number>;
+  meal_count: number;
 };
 
-// Bottom nav preview -- only "Today" is real in Phase 0. The rest are
-// inert (no onClick, dimmed) so it's honest about what's actually built,
-// not a promise of features that don't exist yet.
+// Only Today and Log are real. The rest stay inert and dimmed rather than
+// implying features that don't exist yet.
 const NAV_ITEMS = [
-  { label: "Today", active: true },
-  { label: "Log", active: false },
-  { label: "Coach", active: false },
-  { label: "Foodie", active: false },
-  { label: "Profile", active: false },
+  { label: "Today", href: "/dashboard" },
+  { label: "Log", href: "/log" },
+  { label: "Coach", href: null },
+  { label: "Foodie", href: null },
+  { label: "Profile", href: null },
 ];
+
+function localDate(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+}
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [targets, setTargets] = useState<TargetsResult | null>(null);
+  const [day, setDay] = useState<DayTotals | null>(null);
   const [status, setStatus] = useState<"loading" | "no-profile" | "error" | "ready">("loading");
 
   useEffect(() => {
-    // Guards against a stale fetch (e.g. a fast logout -> login) landing
-    // after a newer one and clobbering state with an outdated response.
+    // Guards against a stale fetch (e.g. a fast logout -> login) landing after a
+    // newer one and clobbering state with an outdated response.
     let cancelled = false;
 
     async function load() {
@@ -44,11 +51,10 @@ export default function DashboardPage() {
         router.replace("/login");
         return;
       }
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/profile`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
+
+      const res = await apiFetch(`/dashboard/today?date=${localDate()}`);
       if (cancelled) return;
-      if (res.status === 406 || res.status === 404) {
+      if (res.status === 404 || res.status === 406) {
         setStatus("no-profile");
         return;
       }
@@ -56,10 +62,12 @@ export default function DashboardPage() {
         setStatus("error");
         return;
       }
-      setTargets(await res.json());
+      const data = await res.json();
       if (cancelled) return;
+      setDay(data);
       setStatus("ready");
     }
+
     load();
     return () => {
       cancelled = true;
@@ -85,7 +93,10 @@ export default function DashboardPage() {
       <main className="flex min-h-screen items-center justify-center bg-bg px-4">
         <div className="text-center">
           <p className="mb-4 text-sm text-ink-dim">You haven&apos;t completed onboarding yet.</p>
-          <Link href="/onboarding" className="bg-linear-to-br from-accent to-accent-2 px-4 py-3 text-sm font-extrabold text-[#1a1006]">
+          <Link
+            href="/onboarding"
+            className="bg-linear-to-br from-accent to-accent-2 px-4 py-3 text-sm font-extrabold text-[#1a1006]"
+          >
             Complete onboarding
           </Link>
         </div>
@@ -93,13 +104,18 @@ export default function DashboardPage() {
     );
   }
 
-  if (status === "error" || !targets) {
+  if (status === "error" || !day) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-bg">
-        <p className="text-sm font-semibold text-warn">Couldn&apos;t load your targets. Try refreshing.</p>
+        <p className="text-sm font-semibold text-warn">
+          Couldn&apos;t load today&apos;s totals. Try refreshing.
+        </p>
       </main>
     );
   }
+
+  const remaining = Math.round(day.remaining.kcal);
+  const over = remaining < 0;
 
   return (
     <main className="flex min-h-screen justify-center bg-bg px-4 py-10">
@@ -108,55 +124,80 @@ export default function DashboardPage() {
           <div>
             <p className="text-xs font-semibold text-ink-dim">Today</p>
             <p className="text-base font-extrabold text-ink">
-              {new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+              {new Date().toLocaleDateString(undefined, {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+              })}
             </p>
           </div>
-          <button type="button" onClick={logout} className="text-xs font-bold text-ink-dim underline underline-offset-2">
+          <button
+            type="button"
+            onClick={logout}
+            className="text-xs font-bold text-ink-dim underline underline-offset-2"
+          >
             Log out
           </button>
         </div>
 
-        <div className="relative mb-4 overflow-hidden border border-border bg-surface p-7">
-          <div className="pointer-events-none absolute -top-5 -right-5 h-40 w-40 rounded-full bg-accent/40 blur-2xl" />
+        <div className="relative mb-4 border border-border bg-surface p-7">
+          <div className="pointer-events-none absolute top-2 right-2 h-28 w-28 rounded-full bg-accent/30 blur-2xl" />
           <div className="relative flex items-baseline gap-1.5">
             <span className="text-5xl font-extrabold tracking-tight text-ink tabular-nums">
-              {Math.round(targets.kcal_target).toLocaleString()}
+              {Math.abs(remaining).toLocaleString()}
             </span>
-            <span className="text-base font-bold text-ink-dim">kcal target</span>
+            <span className="text-base font-bold text-ink-dim">kcal {over ? "over" : "left"}</span>
           </div>
-          <p className="relative mt-3 text-sm text-ink-dim">{targets.explanation}</p>
+          <p className="relative mt-3 text-sm text-ink-dim tabular-nums">
+            {Math.round(day.consumed.kcal).toLocaleString()} of{" "}
+            {Math.round(day.targets.kcal).toLocaleString()} kcal · {day.meal_count}{" "}
+            {day.meal_count === 1 ? "meal" : "meals"} logged
+          </p>
         </div>
 
         <div className="mb-4 grid grid-cols-2 gap-2.5">
           <div className="border border-border bg-surface p-3.5">
-            <b className="block text-xl font-extrabold tabular-nums text-ink">
-              {Math.round(targets.protein_g)}g
+            <b className="block text-xl font-extrabold text-ink tabular-nums">
+              {Math.round(day.consumed.protein_g)}g
             </b>
-            <span className="text-xs font-semibold text-ink-dim">protein target</span>
+            <span className="text-xs font-semibold text-ink-dim">
+              protein of {Math.round(day.targets.protein_g)}g
+            </span>
           </div>
           <div className="border border-border bg-surface p-3.5">
-            <b className="block text-xl font-extrabold tabular-nums text-ink">
-              {Math.round(targets.tdee).toLocaleString()}
+            <b className="block text-xl font-extrabold text-ink tabular-nums">
+              {Math.round(day.consumed.carbs_g)}g / {Math.round(day.consumed.fat_g)}g
             </b>
-            <span className="text-xs font-semibold text-ink-dim">maintenance kcal</span>
+            <span className="text-xs font-semibold text-ink-dim">carbs / fat</span>
           </div>
         </div>
 
-        <p className="mb-4 text-center text-xs text-ink-dim">
-          Meal logging isn&apos;t built yet — that&apos;s Phase 1.
-        </p>
+        <Link
+          href="/log"
+          className="mb-4 block bg-linear-to-br from-accent to-accent-2 px-4 py-3 text-center text-sm font-extrabold text-[#1a1006]"
+        >
+          Log a meal
+        </Link>
 
         <div className="flex border-t border-border bg-surface px-2 py-2.5">
-          {NAV_ITEMS.map((item) => (
-            <div
-              key={item.label}
-              className={`flex-1 text-center text-[0.68rem] font-bold ${
-                item.active ? "text-ink" : "text-ink-dim opacity-50"
-              }`}
-            >
-              {item.label}
-            </div>
-          ))}
+          {NAV_ITEMS.map((item) =>
+            item.href ? (
+              <Link
+                key={item.label}
+                href={item.href}
+                className="flex-1 text-center text-[0.68rem] font-bold text-ink"
+              >
+                {item.label}
+              </Link>
+            ) : (
+              <div
+                key={item.label}
+                className="flex-1 text-center text-[0.68rem] font-bold text-ink-dim opacity-50"
+              >
+                {item.label}
+              </div>
+            )
+          )}
         </div>
       </div>
     </main>
