@@ -14,12 +14,12 @@ type DayTotals = {
   meal_count: number;
 };
 
-// Only Today and Log are real. The rest stay inert and dimmed rather than
-// implying features that don't exist yet.
+// Foodie and Profile aren't built yet, so they stay inert and dimmed rather
+// than implying features that don't exist.
 const NAV_ITEMS = [
   { label: "Today", href: "/dashboard" },
   { label: "Log", href: "/log" },
-  { label: "Coach", href: null },
+  { label: "Coach", href: "/coach" },
   { label: "Foodie", href: null },
   { label: "Profile", href: null },
 ];
