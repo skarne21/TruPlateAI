@@ -7,6 +7,7 @@ import { apiFetch, uploadMealPhoto } from "@/lib/api";
 import { downscaleImage } from "@/lib/image";
 import { createClient } from "@/lib/supabase/client";
 import ReviewStep from "./ReviewStep";
+import VoiceButton from "./VoiceButton";
 import type { AnalyzeResult, ResolvedItem, Totals } from "./types";
 
 type Photo = { blob: Blob; previewUrl: string };
@@ -201,6 +202,17 @@ export default function LogPage() {
                 placeholder="Optional — e.g. 2 idlis and sambar, extra ghee"
                 className="w-full border border-border bg-surface p-3 text-sm text-ink"
               />
+
+              <div className="mt-2">
+                {/* Fills the caption above rather than submitting: the user
+                    reads it back before anything is analysed or logged. */}
+                <VoiceButton
+                  disabled={analyzing}
+                  onTranscript={(text) =>
+                    setCaption((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
+                  }
+                />
+              </div>
 
               {error && <p className="mt-3 text-sm font-semibold text-warn">{error}</p>}
 

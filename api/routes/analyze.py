@@ -13,6 +13,7 @@ from analysis import (
 )
 from deps import get_current_user_client
 from routes.profile import load_profile_row
+from transcribe import frequent_foods, transcribe_audio
 from vision import FatAnswer, VisionError, analyze_meal, build_prompt, identify_fat_from_photo
 
 router = APIRouter()
@@ -126,6 +127,30 @@ async def fat_photo(image: UploadFile = File(...), user=Depends(get_current_user
         return identify_fat_from_photo(await image.read(), image.content_type or "image/jpeg")
     except VisionError as e:
         raise HTTPException(502, str(e))
+
+
+class TranscriptOut(BaseModel):
+    text: str
+
+
+@router.post("/transcribe", response_model=TranscriptOut)
+async def transcribe(audio: UploadFile = File(...), user=Depends(get_current_user_client)):
+    """Recorded speech -> a cleaned meal description for the caption field.
+
+    Deliberately returns text and stops. Nothing is analysed or logged from
+    here: the user reads the caption and presses send themselves, so a misheard
+    food is caught before it becomes calories (invariant #6).
+    """
+    user_id, client = user
+    try:
+        text = transcribe_audio(
+            await audio.read(),
+            audio.content_type or "audio/webm",
+            frequent_foods(client, user_id),
+        )
+    except VisionError as e:
+        raise HTTPException(502, str(e))
+    return TranscriptOut(text=text)
 
 
 class UsdaCandidate(BaseModel):
