@@ -143,13 +143,19 @@ def test_empty_message_is_rejected(client_and_db):
 
 def test_history_is_returned_for_rendering(client_and_db):
     client, db = client_and_db
-    db.rows["messages"] = [
-        {"role": "user", "content": "hi"},
-        {"role": "assistant", "content": "hello"},
-    ]
+    # Messages arrive embedded in the conversation row -- one round trip, not two.
+    db.rows["conversations"] = [{
+        "id": "conv-1",
+        "messages": [
+            {"role": "assistant", "content": "hello", "created_at": "2026-07-24T10:01:00Z"},
+            {"role": "user", "content": "hi", "created_at": "2026-07-24T10:00:00Z"},
+        ],
+    }]
     res = client.get("/chat/history")
     assert res.status_code == 200
+    # Returned in chronological order regardless of how the embed came back.
     assert [m["role"] for m in res.json()] == ["user", "assistant"]
+    assert [m["content"] for m in res.json()] == ["hi", "hello"]
 
 
 def test_chat_requires_authentication():

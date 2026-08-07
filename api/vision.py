@@ -18,22 +18,35 @@ class VisionError(Exception):
     """Gemini could not be reached, or returned output we couldn't validate."""
 
 
+def friendly_genai_error(exc: Exception) -> str:
+    """Turn a raw Gemini failure into something worth showing a user.
+
+    The raw text is a wall of JSON quoting internal quota metric names, which
+    is useless to a user and alarming to look at. Shared by the vision pipeline
+    and the Coach so both fail the same way.
+    """
+    if isinstance(exc, genai_errors.ServerError):
+        return "The AI service is busy right now. Try again in a moment."
+    if isinstance(exc, genai_errors.ClientError) and getattr(exc, "code", None) == 429:
+        return "The AI service has hit its usage limit for now. Try again shortly."
+    return "The AI service couldn't handle that request. Try again in a moment."
+
+
 def _generate(client: genai.Client, contents: list, config) -> types.GenerateContentResponse:
     """Call Gemini, turning transport failures into VisionError.
 
-    Gemini answers 503 UNAVAILABLE whenever the model is busy. Left unhandled
-    that escapes the route as a bare 500 -- and because Starlette's error
-    handler sits OUTSIDE CORSMiddleware, the response carries no CORS headers
-    and the browser reports a misleading "blocked by CORS policy" instead of
-    the real cause. Every Gemini call goes through here so neither caller can
-    reintroduce that.
+    Gemini answers 503 UNAVAILABLE whenever the model is busy, and 429 once a
+    quota runs out. Left unhandled either escapes the route as a bare 500 --
+    and because Starlette's error handler sits OUTSIDE CORSMiddleware, the
+    response carries no CORS headers and the browser reports a misleading
+    "blocked by CORS policy" instead of the real cause. Every non-streaming
+    Gemini call goes through here; the streaming one in chat.py uses
+    friendly_genai_error for the same reason.
     """
     try:
         return client.models.generate_content(model=MODEL, contents=contents, config=config)
-    except genai_errors.ServerError as exc:
-        raise VisionError("The AI service is busy right now. Try again in a moment.") from exc
     except genai_errors.APIError as exc:
-        raise VisionError(f"The AI service rejected that request: {exc}") from exc
+        raise VisionError(friendly_genai_error(exc)) from exc
 
 
 class Portion(BaseModel):

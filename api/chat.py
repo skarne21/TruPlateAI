@@ -5,17 +5,21 @@ counts anything itself -- same discipline that keeps the dashboard honest.
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
-from pydantic import BaseModel
-
 import usda
 from targets import TargetsInput, calculate_targets
+from vision import friendly_genai_error
 
 MODEL = "gemini-2.5-flash"
+
+
+class ChatError(Exception):
+    """The Coach could not reach or use the model."""
 
 # Turns of conversation resent per request. Durable facts arrive from SQL, so
 # the Coach's memory of your history does not depend on what fits in here.
@@ -57,7 +61,11 @@ BOUNDARIES
 
 @dataclass
 class DayRow:
-    """One day's logged totals."""
+    """One day's logged totals, and what the food actually was.
+
+    Totals alone let the Coach say "you're 40g under protein" but not "you had
+    idli and sambar, add paneer" -- and the specific version is the useful one.
+    """
 
     day: date
     kcal: float
@@ -65,10 +73,7 @@ class DayRow:
     carbs_g: float
     fat_g: float
     meals: int
-
-
-class ChatIn(BaseModel):
-    message: str
+    items: list[str] = field(default_factory=list)
 
 
 def summarise_history(history: list[dict], limit: int = HISTORY_LIMIT) -> list[dict]:
@@ -92,12 +97,13 @@ def build_summary(profile: dict, today: date, days: list[DayRow]) -> str:
             f"and {protein_target}g protein."
         )
     else:
+        eaten = f" They ate: {', '.join(today_row.items)}." if today_row.items else ""
         today_text = (
             f"Today: {round(today_row.kcal)} kcal and {round(today_row.protein_g)}g protein "
             f"across {today_row.meals} meal(s). "
             f"Target is {kcal_target} kcal and {protein_target}g protein, so "
             f"{round(kcal_target - today_row.kcal)} kcal and "
-            f"{round(protein_target - today_row.protein_g)}g protein remain."
+            f"{round(protein_target - today_row.protein_g)}g protein remain.{eaten}"
         )
 
     if days:
@@ -127,11 +133,17 @@ def build_summary(profile: dict, today: date, days: list[DayRow]) -> str:
 
 
 def fetch_days(client, user_id: str, today: date, days_back: int = 7) -> list[DayRow]:
-    """Per-day totals over a window, newest first. Plain SQL, never an LLM."""
+    """Per-day totals and food names over a window, newest first.
+
+    Plain SQL, never an LLM. Knowing what was eaten is what lets the Coach give
+    advice that names actual foods rather than only quoting totals.
+    """
     start = today - timedelta(days=days_back - 1)
+    # meal_items is embedded rather than fetched separately: one round trip
+    # (~100ms against Supabase) instead of two, and no N+1 as history grows.
     rows = (
         client.table("meals")
-        .select("logged_on, kcal, protein_g, carbs_g, fat_g")
+        .select("logged_on, kcal, protein_g, carbs_g, fat_g, meal_items(name)")
         .eq("user_id", user_id)
         .eq("status", "confirmed")
         .gte("logged_on", start.isoformat())
@@ -143,6 +155,7 @@ def fetch_days(client, user_id: str, today: date, days_back: int = 7) -> list[Da
     for row in rows:
         day = date.fromisoformat(row["logged_on"])
         current = by_day.get(day) or DayRow(day, 0.0, 0.0, 0.0, 0.0, 0)
+        names = [i["name"] for i in (row.get("meal_items") or []) if i.get("name")]
         by_day[day] = DayRow(
             day=day,
             kcal=current.kcal + (row.get("kcal") or 0.0),
@@ -150,6 +163,7 @@ def fetch_days(client, user_id: str, today: date, days_back: int = 7) -> list[Da
             carbs_g=current.carbs_g + (row.get("carbs_g") or 0.0),
             fat_g=current.fat_g + (row.get("fat_g") or 0.0),
             meals=current.meals + 1,
+            items=[*current.items, *names],
         )
     return sorted(by_day.values(), key=lambda d: d.day, reverse=True)
 
@@ -163,7 +177,10 @@ def build_tools(client, user_id: str, today: date) -> list:
     """
 
     def get_logs(days: int) -> dict:
-        """Get the user's logged food totals for each of the last N days.
+        """Get what the user ate and their totals for each of the last N days.
+
+        Returns per-day calories, protein, carbs, fat, and the names of the
+        foods they logged.
 
         Args:
             days: How many days back to look, from 1 to 90.
@@ -181,6 +198,7 @@ def build_tools(client, user_id: str, today: date) -> list:
                     "carbs_g": round(r.carbs_g),
                     "fat_g": round(r.fat_g),
                     "meals": r.meals,
+                    "foods": r.items,
                 }
                 for r in rows
             ],
@@ -222,8 +240,15 @@ def stream_reply(system_prompt: str, history: list[dict], tools: list, *, client
         tools=tools,
         thinking_config=types.ThinkingConfig(thinking_budget=THINKING_BUDGET),
     )
-    for chunk in client.models.generate_content_stream(
-        model=MODEL, contents=contents, config=config
-    ):
-        if chunk.text:
-            yield chunk.text
+    # Failures here surface mid-stream, where the response has already
+    # committed to HTTP 200 -- so the message the user sees is whatever text
+    # this raises. Raw Gemini errors are a wall of JSON quoting internal quota
+    # metric names, hence the shared translation.
+    try:
+        for chunk in client.models.generate_content_stream(
+            model=MODEL, contents=contents, config=config
+        ):
+            if chunk.text:
+                yield chunk.text
+    except genai_errors.APIError as exc:
+        raise ChatError(friendly_genai_error(exc)) from exc

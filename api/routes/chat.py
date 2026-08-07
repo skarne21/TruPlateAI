@@ -56,36 +56,38 @@ def stream_ndjson(
     yield json.dumps({"type": "done"}) + "\n"
 
 
-def _conversation_id(client, user_id: str) -> str:
-    """Fetch or create this user's single ongoing Coach conversation."""
+def _conversation(client, user_id: str) -> tuple[str, list[dict]]:
+    """This user's ongoing Coach conversation and its messages, in one round trip.
+
+    The messages are embedded rather than fetched separately -- one round trip
+    instead of two, and every round trip here is dead time before the model can
+    start generating.
+    """
     existing = (
         client.table("conversations")
-        .select("id")
+        .select("id, messages(role, content, created_at)")
         .eq("user_id", user_id)
         .eq("assistant", ASSISTANT)
         .execute()
     ).data
+
     if existing:
-        return existing[0]["id"]
+        rows = sorted(existing[0].get("messages") or [], key=lambda m: m["created_at"])
+        return existing[0]["id"], [
+            {"role": r["role"], "content": r["content"]} for r in rows
+        ]
 
     created = client.table("conversations").insert(
         {"user_id": user_id, "assistant": ASSISTANT}
     ).execute()
-    return created.data[0]["id"]
+    return created.data[0]["id"], []
 
 
 @router.get("/chat/history", response_model=list[Message])
 def chat_history(user=Depends(get_current_user_client)):
     user_id, client = user
-    conversation_id = _conversation_id(client, user_id)
-    rows = (
-        client.table("messages")
-        .select("role, content")
-        .eq("conversation_id", conversation_id)
-        .order("created_at")
-        .execute()
-    ).data
-    return [Message(**row) for row in rows]
+    _, stored = _conversation(client, user_id)
+    return [Message(**row) for row in stored]
 
 
 @router.post("/chat")
@@ -96,15 +98,7 @@ def chat(body: ChatIn, user=Depends(get_current_user_client)):
 
     user_id, client = user
     profile = load_profile_row(client, user_id)
-    conversation_id = _conversation_id(client, user_id)
-
-    stored = (
-        client.table("messages")
-        .select("role, content")
-        .eq("conversation_id", conversation_id)
-        .order("created_at")
-        .execute()
-    ).data
+    conversation_id, stored = _conversation(client, user_id)
     history = summarise_history([*stored, {"role": "user", "content": message}])
 
     # Real numbers, computed in SQL, handed to the model as text.
