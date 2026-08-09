@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from analysis import ResolvedItem, totals_for
 from deps import get_current_user_client
 from routes.profile import load_profile_row
+from routes.weights import _current_target
 from targets import TargetsInput, calculate_targets
 
 router = APIRouter()
@@ -105,8 +106,11 @@ def dashboard_today(date: date, user=Depends(get_current_user_client)):
         for key in ("kcal", "protein_g", "carbs_g", "fat_g")
     }
 
-    computed = calculate_targets(TargetsInput(**load_profile_row(client, user_id)))
-    targets = {"kcal": computed.kcal_target, "protein_g": computed.protein_g}
+    # The latest stored target, which is the adaptive one once the engine has
+    # produced any. Falls back to the formula for a user with no history --
+    # otherwise the adaptive number would never reach the dashboard.
+    current = _current_target(client, user_id, load_profile_row(client, user_id))
+    targets = {"kcal": current.kcal, "protein_g": current.protein_g}
 
     return DayTotals(
         date=date,
