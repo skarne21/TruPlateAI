@@ -167,12 +167,30 @@ def add_weight(body: WeighInIn, user=Depends(get_current_user_client)):
     weighs, intakes = _history(client, user_id, body.measured_on)
     formula = calculate_targets(TargetsInput(**profile))
 
+    # Only an *adaptive* change starts the weekly clock. The formula target is
+    # the starting point, not an adjustment, so it must not block the first one.
+    last_adaptive = (
+        client.table("targets")
+        .select("effective_date")
+        .eq("user_id", user_id)
+        .eq("source", "adaptive")
+        .order("effective_date", desc=True)
+        .limit(1)
+        .execute()
+    ).data
+    days_since = (
+        (body.measured_on - date.fromisoformat(last_adaptive[0]["effective_date"])).days
+        if last_adaptive
+        else None
+    )
+
     result = recommend_target(
         current_kcal=current.kcal,
         target_rate_lb_per_week=float(profile["rate_lb_per_week"]),
         formula_tdee=formula.tdee,
         weights=weighs,
         intakes=intakes,
+        days_since_last_change=days_since,
     )
 
     target = current

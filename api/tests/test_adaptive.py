@@ -7,6 +7,7 @@ from adaptive import (
     ALPHA,
     KCAL_PER_LB_BODY,
     MAX_CHANGE_KCAL,
+    MIN_CHANGE_KCAL,
     MIN_DAYS,
     DayIntake,
     WeighIn,
@@ -178,6 +179,37 @@ def test_holding_the_target_rate_leaves_calories_alone():
     result = recommend_target(current_kcal=2875, target_rate_lb_per_week=0.5,
                               formula_tdee=2625, weights=ws, intakes=ins)
     assert abs(result.new_kcal - 2875) < 60
+
+
+def test_only_one_adjustment_per_week():
+    # The cap is 150 kcal PER WEEK. Adjusting on every weigh-in would let a
+    # daily weigher move their target 150x7 in a week and defeat the whole
+    # stability guarantee -- a live run produced 14 changes in 28 days.
+    ws, ins = steady_gain(28, 2800, 0.005)
+    result = recommend_target(current_kcal=2875, target_rate_lb_per_week=0.5,
+                              formula_tdee=2625, weights=ws, intakes=ins,
+                              days_since_last_change=3)
+    assert result.adjusted is False
+    assert result.new_kcal == 2875
+    assert "week" in result.explanation.lower()
+
+
+def test_a_week_after_the_last_change_it_may_adjust_again():
+    ws, ins = steady_gain(28, 2800, 0.005)
+    result = recommend_target(current_kcal=2875, target_rate_lb_per_week=0.5,
+                              formula_tdee=2625, weights=ws, intakes=ins,
+                              days_since_last_change=7)
+    assert result.adjusted is True
+
+
+def test_trivial_changes_are_not_recorded():
+    # A 6 kcal move is noise. Writing it creates a history row that says
+    # nothing and makes real changes harder to spot.
+    ws, ins = steady_gain(28, 2800, 0.0324)  # already on plan
+    result = recommend_target(current_kcal=2831, target_rate_lb_per_week=0.5,
+                              formula_tdee=2625, weights=ws, intakes=ins)
+    assert result.adjusted is False
+    assert abs(result.new_kcal - 2831) < MIN_CHANGE_KCAL
 
 
 def test_result_reports_what_it_measured():

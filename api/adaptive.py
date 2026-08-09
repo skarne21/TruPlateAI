@@ -36,6 +36,15 @@ FULL_TRUST_DAYS = 28
 # people plan meals around has to be stable to be trusted.
 MAX_CHANGE_KCAL = 150.0
 
+# The cap above is per WEEK, so adjustments happen at most weekly. Running on
+# every weigh-in would let someone who weighs daily move their target 150x7 in
+# a week, which is exactly the instability the cap exists to prevent.
+MIN_DAYS_BETWEEN_CHANGES = 7
+
+# Changes smaller than this aren't worth recording: they're inside the noise,
+# and a history full of 6 kcal entries buries the changes that mattered.
+MIN_CHANGE_KCAL = 25.0
+
 # Fraction of days needing a logged meal before intake is believable.
 ADHERENCE_THRESHOLD = 0.7
 
@@ -108,10 +117,22 @@ def recommend_target(
     formula_tdee: float,
     weights: list[WeighIn],
     intakes: list[DayIntake],
+    days_since_last_change: int | None = None,
 ) -> Recommendation:
     """Decide whether the calorie target should move, and by how much."""
     ordered = sorted(weights, key=lambda w: w.measured_on)
     days_span = (ordered[-1].measured_on - ordered[0].measured_on).days + 1 if ordered else 0
+
+    if days_since_last_change is not None and days_since_last_change < MIN_DAYS_BETWEEN_CHANGES:
+        return Recommendation(
+            adjusted=False,
+            new_kcal=current_kcal,
+            days_of_data=days_span,
+            explanation=(
+                f"Your target changed {days_since_last_change} day(s) ago. It adjusts at "
+                "most once a week so it has time to actually take effect."
+            ),
+        )
 
     if len(ordered) < 2 or days_span < MIN_DAYS:
         return Recommendation(
@@ -154,6 +175,8 @@ def recommend_target(
 
     ideal = estimate + target_rate_lb_per_week * KCAL_PER_LB_PER_WEEK
     change = max(-MAX_CHANGE_KCAL, min(MAX_CHANGE_KCAL, ideal - current_kcal))
+    if abs(change) < MIN_CHANGE_KCAL:
+        change = 0.0
     new_kcal = current_kcal + change
 
     direction = "up" if change > 0 else "down" if change < 0 else "unchanged"
