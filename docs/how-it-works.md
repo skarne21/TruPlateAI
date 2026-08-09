@@ -1,6 +1,6 @@
 # How TruPlate AI Works — a walkthrough for a beginner
 
-This document explains what's actually been built so far (Phases 0 and 1 of 5 — see
+This document explains what's actually been built so far (Phases 0 to 3 of 5 — see
 [project-plan.md](project-plan.md) for the full roadmap), how the pieces fit
 together, and every real bug we hit while building it and why it happened.
 It's written for someone who can code but hasn't necessarily used Next.js,
@@ -22,7 +22,7 @@ guessing) supplies the calorie and macro numbers. Two AI assistants ("Coach"
 and "Foodie") will eventually give advice based on your actual logged
 history.
 
-**What exists right now (Phases 0 and 1):**
+**What exists right now (Phases 0 to 3):**
 
 - *Phase 0 — foundation:* accounts, login, an onboarding wizard that computes
   your personalized calorie/protein targets, and a dashboard that shows them.
@@ -31,9 +31,18 @@ history.
   database, the app asks up to three bounded questions about things that
   actually move the number (mainly hidden cooking oil), you edit anything
   that's wrong, and it's logged against today's targets.
+- *Phase 2 — the Coach, and voice:* a chat assistant that answers from your
+  actual logged data rather than from memory, and the ability to speak a meal
+  instead of typing it.
+- *Phase 3 (partly) — adaptive targets:* your calorie target stops being a
+  textbook formula and starts being computed from your own weigh-ins and
+  intake.
 
-Not built yet: the Coach and Foodie assistants, voice input, meal memory, and
-the adaptive-targets engine — Phases 2 through 4.
+Not built yet: meal memory, the Foodie assistant, and the accuracy evaluation
+suite — the rest of Phases 3 and 4.
+
+A companion file, [WORKLOG.md](WORKLOG.md), records what was built when, and
+every bug that reached committed code.
 
 ---
 
@@ -210,6 +219,109 @@ real numbers (butter is ~717 kcal/100g, ghee ~900 — a single hardcoded value
 would be wrong for one of them), and you can see and delete it like any other
 food. One code path instead of two.
 
+### Speaking a meal instead of typing it
+
+Tap the mic on [the log page](../web/app/log/page.tsx), say what you ate, tap
+stop. The recording goes to `POST /transcribe`
+([api/transcribe.py](../api/transcribe.py)) and comes back cleaned up.
+
+The important part is that it's **not plain speech-to-text**. What makes
+dictation feel good isn't better hearing, it's an AI cleanup pass afterwards:
+
+> **You say:** *"Um, I had two idlis, no wait, three idlis with, like, sambar"*
+> **You get:** *"I had three idlis with sambar"*
+
+Filler gone, and the correction resolved. Two rules keep it honest: it's told
+never to invent a food that wasn't said (an invented food is calories you
+never ate), and the transcript **fills the caption box rather than submitting**.
+You read it before anything is analysed, so a misheard word gets caught by a
+human. Transcription is also primed with the foods you log most, because
+generic speech-to-text turns "idli" into "it'll".
+
+### The Coach
+
+[web/app/coach/page.tsx](../web/app/coach/page.tsx) is a chat, but the
+interesting design is what it knows before you type.
+
+Every message sends the model a **summary computed in SQL**: today's calories
+and protein against target, what you ate, and your last 7 days. So "how many
+calories do I have left?" is answered from a real database query, not from the
+model counting things up. For anything deeper it can call two tools
+([api/chat.py](../api/chat.py)):
+
+- `get_logs(days)` — real per-day totals and food names
+- `usda_lookup(food)` — macros for something you haven't logged
+
+**Those tools cannot reach anyone else's data, by construction.** `get_logs`
+takes only a number of days — there is no parameter for *whose* logs — and it
+closes over a database connection already authenticated as you. The model
+couldn't ask for someone else's rows if it tried.
+
+Two decisions worth understanding:
+
+- **Conversation history is capped at 20 messages.** This sounds like a
+  limitation and is actually the point. A plain chatbot's memory is whatever
+  fits in its context window, so your oldest data silently falls out. Here the
+  durable facts arrive from SQL every turn, so the Coach's knowledge of your
+  history doesn't depend on the conversation length at all.
+- **"Thinking" is switched off for chat.** Gemini can reason before answering,
+  which took 7.7 seconds before a single word appeared. Off, it's 0.8. Chat
+  lives or dies on responsiveness, and the Coach isn't reasoning hard — the
+  numbers arrive pre-computed. The photo pipeline keeps thinking on, where
+  accuracy matters more than speed.
+
+### Adaptive targets: the app learning your metabolism
+
+The Mifflin-St Jeor formula from Phase 0 is a *population average*. Real
+energy expenditure varies by a few hundred calories around it for reasons no
+formula can see. After a couple of weeks you've produced better evidence:
+what you ate, and what your weight did.
+
+[api/adaptive.py](../api/adaptive.py) turns those two facts into your actual
+burn. It contains no AI at all — it's arithmetic, and it's the part of this
+project that most has to be provably right.
+
+**Step 1 — smooth the noise.** Daily weight swings pounds on water and salt
+alone, so raw weigh-ins are mostly noise. An *exponential moving average*
+blends each reading with the running average:
+
+```
+today's_trend = 0.3 × today's_weight + 0.7 × yesterday's_trend
+```
+
+One salty dinner barely moves it; a real trend shows through within a week.
+
+**Step 2 — work backwards from energy balance.**
+
+```
+your_burn = what_you_ate − (weight_change_in_lb × 3500 ÷ days)
+```
+
+If you ate 2500/day and *gained*, your real burn was **below** 2500. If you
+lost, it was above. (A pound of body mass is about 3500 calories.)
+
+**Step 3 — don't trust it too early.** Two weeks of data is suggestive, not
+conclusive. The estimate ramps from formula to observed across weeks 2–4
+rather than switching over at a threshold. In a simulation with realistic
+scale noise, the two-week estimate was **351 calories wrong** and the
+four-week estimate was **37 calories wrong** — which is the whole argument for
+ramping.
+
+**Three guards, each preventing a specific failure:**
+
+- **Changes cap at 150 calories, at most once a week.** A number you plan
+  meals around has to be stable; one holiday shouldn't swing it hundreds.
+- **Nothing adjusts unless 70% of days were logged.** Your burn is computed
+  from *logged* intake, so missing days make it look like you ate less — and
+  the app would cut calories from someone who merely forgot to log. That's the
+  worst mistake available to it, so it refuses and says why.
+- **Every change is stored with a plain-language reason**, in an append-only
+  history. A number that moves without explanation reads as a bug.
+
+[The weigh-in page](../web/app/weight/page.tsx) charts your raw readings faint
+behind the smoothed trend, because the raw line is noise and the trend is the
+thing worth reacting to.
+
 ---
 
 ## 4. The database
@@ -243,12 +355,27 @@ photos. Three decisions in there worth understanding:
   restricts you to files under your own user ID. They upload only when you
   confirm, so abandoned analyses don't leave junk behind.
 
+Later migrations add the rest:
+[0003_chat.sql](../supabase/migrations/0003_chat.sql) stores Coach
+conversations, and [0004_adaptive.sql](../supabase/migrations/0004_adaptive.sql)
+adds `weights` and `targets`.
+
+Two rules there are worth copying elsewhere. **Weigh-ins are never
+overwritten** (bar re-weighing on the same day, which replaces rather than
+double-counts), because the adaptive engine needs the whole series. And
+**`targets` is append-only** — a change writes a new row with its reason
+attached, rather than editing the old one, so you can always see the history
+of why your number is what it is.
+
+Eight tables now, every one with Row Level Security enabled the moment it was
+created.
+
 ---
 
 ## 5. Security: JWTs and Row Level Security, explained
 
 This is the section that maps directly to the "March 2026 Cal AI breach"
-story in [project-plan.md](../project-plan.md) — 3.2 million user records
+story in [project-plan.md](project-plan.md) — 3.2 million user records
 leaked because a competitor's backend had no real per-user access control.
 The mitigation here is two independent layers:
 
@@ -477,6 +604,63 @@ photo — pick an amount below."
 **Lesson:** when a data model has no way to express "none", something will
 express it badly. Model the absent case deliberately.
 
+### Chasing a performance problem that wasn't there (twice)
+
+The Coach took over 5 seconds to say its first word. Finding out why took
+three attempts, two of which were wrong.
+
+**Wrong guess #1.** I measured a database round trip at ~700ms, decided the
+chat request was making six of them, and rewrote two pairs of queries into
+single ones. It barely helped — because the 700ms figure came from opening a
+*fresh* network connection for each measurement. Real queries, reusing an
+open connection, were 50–130ms. The queries were never the problem.
+
+**Wrong guess #2.** Measuring an endpoint over HTTP showed 2.1 seconds per
+request. That turned out to be almost entirely a Windows quirk: `localhost`
+resolves to an IPv6 address first, the server only listens on IPv4, and the
+failed attempt has to time out before it retries. Via `127.0.0.1` the same
+request took **5 milliseconds**. I had been measuring my own test script.
+
+**The real cause**, found by finally timing each step: verifying the login
+token took **1475ms**, and 900ms of that was the HTTP library building an SSL
+context for a brand-new database client — on *every single request*.
+
+Two fixes. Supabase publishes the public half of the key it signs tokens
+with, so tokens are now verified locally with maths instead of by asking
+Supabase over the network. And the client is reused per session rather than
+rebuilt per request. **1475ms became 0.5ms**, on every authenticated page.
+
+**Lessons:** measure before optimising, and be suspicious of your measuring
+tool before your code. Both wrong guesses were plausible, and both would have
+been "fixed" by shipping a change that did nothing.
+
+### A safety cap that made things less safe
+
+The adaptive engine is supposed to move your calorie target by **at most 150
+calories per week**, so one strange week can't send it flying.
+
+What I actually wrote capped it at 150 calories **per weigh-in**, and ran on
+every weigh-in. Weigh yourself weekly and those are identical. Weigh yourself
+*daily* and you get seven chances a week — the target could travel over a
+thousand calories in seven days. The safety cap was doing precisely the
+opposite of its job.
+
+**Why the tests missed it:** each test asked one question — *"given this data,
+what's the answer?"* — and every answer was correct. The bug isn't in any
+single answer. It only exists across a *sequence*, because each answer becomes
+the starting point for the next. Simulating four weeks against the real
+database exposed it immediately: **14 target changes in 28 days**, where there
+should have been about four.
+
+Fixed by adjusting at most weekly and ignoring changes under 25 calories.
+Afterwards it recorded 2 changes instead of 14 — and landed *closer* to the
+right answer, 3 calories off instead of 21. Reacting less often made it more
+accurate, because it stopped chasing noise.
+
+**Lesson:** "at most X per week" and "at most X per event" are the same rule
+only if events happen exactly once a week. Any rate limit written as a
+per-call limit deserves a second look.
+
 ### A design bug caught in the mockup before it ever reached real code
 While building the standalone HTML/CSS design mockup
 ([docs/mockup.html](mockup.html)) — used to nail down the look before
@@ -556,20 +740,31 @@ numerically rather than by eye (tripling a portion must triple its calories),
 and removing the last item must *disable* logging rather than save an empty
 meal.
 
+Phase 2 needed a trick. Testing voice input properly needs someone speaking,
+so Gemini's text-to-speech model was used to *generate* a sentence with filler
+and a self-correction in it, which was then fed through the real transcription
+pipeline. It came back cleaned correctly — a genuine test of the hardest part,
+with no human in the room.
+
+Phase 3 ran four simulated weeks of weigh-ins and meals against the real
+database, which is what exposed the adaptive engine's weekly-cap bug.
+
 This browser-driven habit is what caught nearly every real bug in this
 document — `gym_days`, all three CORS-shaped failures, the 4x banana, and the
 AI writing an error into a food name. **None of them would have failed a
 typecheck, and most wouldn't have failed a unit test either**, because unit
 tests only check the cases you already thought of.
 
-Backend logic is covered by `pytest` — **48 tests passing**: the targets maths
-([test_targets.py](../api/tests/test_targets.py)), USDA matching and scaling
-([test_usda_mapping.py](../api/tests/test_usda_mapping.py)), the AI response
-schema and its retry/outage handling
-([test_vision.py](../api/tests/test_vision.py)), and the clarifying-answer
-arithmetic ([test_analysis.py](../api/tests/test_analysis.py)). The USDA tests
-run against saved real API responses, so the suite needs no network and can't
-break because someone else's server is down.
+Backend logic is covered by `pytest` — **109 tests passing** across ten files:
+the targets maths, the adaptive engine, USDA matching and scaling, the AI
+response schema and its retry/outage handling, the clarifying-answer
+arithmetic, the Coach's context and tools, and voice transcription. See
+[WORKLOG.md](WORKLOG.md) for the per-file breakdown.
+
+**The whole suite runs offline and needs no credentials.** USDA responses are
+saved fixtures and every AI call is faked, so it can't fail because someone
+else's server is down — and it will run in CI without secrets when Phase 4
+adds one.
 
 Phase 1 verification went further than the browser, because the security
 claims deserve proof rather than assertion: a script created two accounts,
@@ -600,10 +795,25 @@ double-counting → 1 tbsp of ghee added as 119 calories of real USDA "Ghee,
 clarified butter" → portion edited → logged → dashboard updated. A second user
 account confirmed it can see **none** of the first user's meals or photos.
 
-**Next (Phase 2 — assistants and voice, not started):** the Coach and Foodie
-chat assistants with tool calling, and voice meal logging. Per
-[CLAUDE.md](../CLAUDE.md)'s phase discipline, none of that gets built until
-Phase 1's exit criteria are met — which they now are.
+**Done (Phase 2 — the Coach and voice):** `POST /chat` streaming word by word
+with tool calling, conversations persisted, and voice meal logging with the
+transcribe-and-clean pass. Verified live: the Coach quoted real logged numbers
+and named the actual foods eaten, deferred a medical question to a doctor, and
+a second account could read none of the first's conversation.
+
+**Done (Phase 3, partly — adaptive targets):** the weigh-in page with its
+trend chart, and the engine that recomputes your calorie target from your own
+data. Verified against four simulated weeks: it estimated a burn of 2721
+against a true 2700, and moved the target to within 3 calories of ideal.
+
+**Next:** meal memory — confirmed meals get embedded so a re-scan recognises
+them and offers your own corrected numbers in one tap. Then the recipe corpus,
+then the Foodie assistant on top of both. Foodie is deliberately last: its
+useful features depend on that corpus, so building it now would mean building
+it twice.
+
+Then Phase 4: an accuracy evaluation suite, rate limiting, Docker and CI, and
+deployment.
 
 ### Known limitations, stated plainly
 
@@ -618,3 +828,12 @@ Phase 1's exit criteria are met — which they now are.
 - **Nothing verifies that a page *looks* right.** Every visual bug in this
   document was found by a human looking at a screenshot. Automated checks
   confirm behaviour, not appearance.
+- **Both free tiers are real constraints.** Gemini's daily limit ran out twice
+  during a single session of testing, and Supabase pauses a project that sits
+  idle for about a week — which turns a shared link into a dead one. Both need
+  answering before this is deployed anywhere a stranger might click it.
+- **The Coach's medical guardrail is a prompt instruction**, which is weaker
+  than enforcing something in code. It mostly talks rather than recommending
+  specific foods, so the exposure is smaller — but that's a difference in kind,
+  not a claim that the two are equivalent.
+- **It isn't deployed.** Everything above runs on one laptop.
