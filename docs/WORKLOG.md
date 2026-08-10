@@ -634,7 +634,10 @@ never contains half a sentence attributed to the Coach.
 > *original* file doesn't affect the copy. I was faking a function that was
 > never being called, and the real one was quietly running instead.
 >
-> A test that passes against the wrong code is worse than no test.
+> Here it failed loudly, which was lucky. The same mistake can just as easily
+> produce a test that *passes* while checking nothing — and a test that passes
+> against code it never ran is worse than no test, because it buys false
+> confidence.
 
 ## Hunting a slowdown, and being wrong twice — `2a6983a`
 
@@ -857,6 +860,38 @@ computer checking the code for obvious errors, and several passed the tests.**
    because every test asked one question and the bug lived between questions.
 4. **Measure before you fix.** #16 took three attempts, two of which were
    confident and wrong.
+
+### Three times the test was wrong and the code was right
+
+Worth separating out, because it's the opposite of what people expect tests to
+do. A failing test means *something* disagrees — it does **not** tell you which
+side is mistaken. Three times here, the code was fine and my check was faulty.
+
+**Week 1 — bad arithmetic in the expected answer.** I asserted a calorie target
+calculated from resting metabolism, when it should have been resting metabolism
+× activity factor. The code had it right. *Caught because TDD made the
+disagreement appear immediately, while both sides were still fresh enough to
+compare.*
+
+**Week 4 — a fake that replaced nothing.** Two tests failed, and it took a
+while to accept the application code was innocent. In Python,
+`from chat import stream_reply` **copies** the function into the importing
+file, so substituting it in the original leaves the copy untouched. I was
+faking a function nobody called, while the real one quietly ran and tried to
+reach the network. *Caught because the tests took 13 seconds — the giveaway
+that something was hitting the internet.*
+
+**Week 5 — a premise that felt obvious and wasn't.** I wrote
+`test_gaining_too_fast_lowers_calories`. Gaining too fast, so cut calories:
+obvious. Also wrong. The person was eating 3400 against a 2875 target, so the
+surplus explains the gain, and measured burn — which subtracts that surplus —
+came out *above* the formula's estimate. The target should rise. *Caught
+because the code disagreed with me and turned out to have the better grasp of
+the physics.*
+
+**What to take from it:** when a test fails, the first question is "which of
+these two is wrong?" — not "how do I make this pass?". Changing the test until
+it goes green is how a real bug gets certified as correct behaviour.
 
 ---
 
