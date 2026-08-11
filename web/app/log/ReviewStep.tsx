@@ -30,6 +30,7 @@ export default function ReviewStep({
   saving: boolean;
 }) {
   const [answered, setAnswered] = useState<Set<string>>(new Set());
+  const [usedMemory, setUsedMemory] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Set once a fat photo has identified the oil but not the amount -- the
@@ -149,6 +150,36 @@ export default function ReviewStep({
           {round(totals.fat_g)}g fat
         </p>
       </div>
+
+      {result.similar_meal && !usedMemory && (
+        <div className="mb-3 border border-good/50 bg-good/10 p-4">
+          <p className="text-sm font-bold text-ink">You&apos;ve logged this before</p>
+          <p className="mt-0.5 text-xs text-ink-dim">
+            &ldquo;{result.similar_meal.summary}&rdquo;
+            {result.similar_meal.logged_on && ` on ${result.similar_meal.logged_on}`} —{" "}
+            {round(result.similar_meal.totals.kcal)} kcal with your own corrections.
+          </p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              // Replaces the fresh analysis with the numbers this user already
+              // checked and fixed. Their corrections beat a new estimate.
+              onChange(result.similar_meal!.items, result.similar_meal!.totals);
+              setUsedMemory(true);
+            }}
+            className="mt-2.5 border border-good bg-good px-3.5 py-2 text-sm font-bold text-[#08150f] disabled:opacity-40"
+          >
+            Log my usual instead
+          </button>
+        </div>
+      )}
+
+      {usedMemory && (
+        <p className="mb-3 border border-good/40 bg-good/10 p-3 text-xs font-semibold text-ink">
+          Using your saved numbers from last time. Everything below is still editable.
+        </p>
+      )}
 
       {result.warnings.map((warning) => (
         <p key={warning} className="mb-2 border border-warn/40 bg-warn/10 p-3 text-xs font-medium text-ink">

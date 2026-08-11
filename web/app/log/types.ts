@@ -31,6 +31,16 @@ export type Question = {
 
 export type Totals = Record<"kcal" | "protein_g" | "carbs_g" | "fat_g", number>;
 
+/** A meal logged before that looks like this one. Offered, never auto-applied. */
+export type SimilarMeal = {
+  meal_id: string;
+  summary: string;
+  similarity: number;
+  logged_on: string | null;
+  totals: Totals;
+  items: ResolvedItem[];
+};
+
 export type AnalyzeResult = {
   meal_summary: string;
   input_mode: string;
@@ -39,6 +49,7 @@ export type AnalyzeResult = {
   totals: Totals;
   warnings: string[];
   analysis_json: Record<string, unknown>;
+  similar_meal: SimilarMeal | null;
 };
 
 export type UsdaCandidate = {

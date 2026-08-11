@@ -159,7 +159,7 @@ Always give tappable `options` and name the affected items in `affects_items`.
 """
 
 
-def build_prompt(profile: dict) -> str:
+def build_prompt(profile: dict, known_meals: list[str] | None = None) -> str:
     """Fill the vision prompt template from the caller's profile.
 
     Every {} slot is per-user: nothing about any one user is hardcoded
@@ -175,7 +175,7 @@ def build_prompt(profile: dict) -> str:
         cuisines=as_list(profile.get("cuisines") or []),
         exclusions=as_list(profile.get("exclusions") or []),
         restaurants="(none yet)",
-        known_meals="(none yet)",
+        known_meals=as_list(known_meals or []),
     )
 
 

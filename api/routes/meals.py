@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from analysis import ResolvedItem, totals_for
 from deps import get_current_user_client
+from memory import embed_meal
 from routes.profile import load_profile_row
 from routes.weights import _current_target
 from targets import TargetsInput, calculate_targets
@@ -76,7 +77,32 @@ def log_meal(body: LogIn, user=Depends(get_current_user_client)):
         for item in body.items
     ]).execute()
 
+    _remember(client, user_id, meal_id, body)
     return LogResult(meal_id=meal_id, totals=totals)
+
+
+def _remember(client, user_id: str, meal_id: str, body: LogIn) -> None:
+    """Store an embedding so this meal can be recognised next time.
+
+    Runs after the meal is safely saved, and swallows its own failures: meal
+    memory is a convenience, and losing a real logged meal because an optional
+    feature broke would be a straight downgrade.
+    """
+    summary = (
+        (body.analysis_json or {}).get("meal_summary")
+        or body.caption
+        or ", ".join(item.name for item in body.items)
+    )
+    embedding = embed_meal(summary)
+    if not embedding:
+        return
+    try:
+        client.table("meal_embeddings").upsert({
+            "meal_id": meal_id, "user_id": user_id,
+            "summary": summary, "embedding": embedding,
+        }).execute()
+    except Exception:
+        pass
 
 
 class DayTotals(BaseModel):

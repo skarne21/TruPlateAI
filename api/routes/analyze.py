@@ -1,3 +1,5 @@
+from datetime import date
+
 import requests
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -12,6 +14,7 @@ from analysis import (
     totals_for,
 )
 from deps import get_current_user_client
+from memory import embed_meal, find_similar_meal, recent_meal_summaries
 from routes.profile import load_profile_row
 from transcribe import frequent_foods, transcribe_audio
 from vision import FatAnswer, VisionError, analyze_meal, build_prompt, identify_fat_from_photo
@@ -19,6 +22,17 @@ from vision import FatAnswer, VisionError, analyze_meal, build_prompt, identify_
 router = APIRouter()
 
 MAX_IMAGES = 5
+
+
+class SimilarMeal(BaseModel):
+    """A meal the user has logged before that looks like this one."""
+
+    meal_id: str
+    summary: str
+    similarity: float
+    logged_on: date | None = None
+    totals: dict[str, float]
+    items: list[ResolvedItem]
 
 
 class AnalyzeResult(BaseModel):
@@ -29,6 +43,48 @@ class AnalyzeResult(BaseModel):
     totals: dict[str, float]
     warnings: list[str]
     analysis_json: dict
+    # Offered, never applied automatically -- silently substituting an old
+    # meal's numbers for what's actually on the plate is exactly the confident
+    # wrongness this project exists to avoid.
+    similar_meal: SimilarMeal | None = None
+
+
+def _previous_meal(client, user_id: str, summary: str) -> SimilarMeal | None:
+    """Find a close enough previous meal and load its corrected items."""
+    match = find_similar_meal(client, user_id, embed_meal(summary))
+    if match is None:
+        return None
+
+    rows = (
+        client.table("meal_items")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("meal_id", match["meal_id"])
+        .execute()
+    ).data
+    if not rows:
+        return None
+
+    items = [
+        ResolvedItem(
+            name=r["name"], usda_query=r.get("usda_query") or r["name"],
+            grams=float(r["grams"]), count=float(r.get("count") or 1),
+            unit=r.get("unit") or "serving", confidence=float(r.get("confidence") or 1),
+            source=r["source"], usda_fdc_id=r.get("usda_fdc_id"),
+            usda_description=r.get("usda_description"),
+            kcal=r.get("kcal"), protein_g=r.get("protein_g"),
+            carbs_g=r.get("carbs_g"), fat_g=r.get("fat_g"),
+        )
+        for r in rows
+    ]
+    return SimilarMeal(
+        meal_id=match["meal_id"],
+        summary=match["summary"],
+        similarity=float(match["similarity"]),
+        logged_on=match.get("logged_on"),
+        totals=totals_for(items),
+        items=items,
+    )
 
 
 @router.post("/analyze", response_model=AnalyzeResult)
@@ -52,7 +108,10 @@ async def analyze(
     profile = load_profile_row(client, user_id)
 
     input_mode = "photo_text" if images and caption else ("photo" if images else "text")
-    prompt = build_prompt(profile)
+    # Telling the model what this user actually eats biases identification
+    # towards it -- the difference between reading a photo as "dosa" and as
+    # "crepe".
+    prompt = build_prompt(profile, known_meals=recent_meal_summaries(client, user_id))
     if caption:
         prompt += f'\n\nThe user described this meal as: "{caption}"'
     prompt += f'\n\nSet "input_mode" to "{input_mode}".'
@@ -75,6 +134,7 @@ async def analyze(
         totals=totals_for(items),
         warnings=analysis.warnings,
         analysis_json=analysis.model_dump(),
+        similar_meal=_previous_meal(client, user_id, analysis.meal_summary),
     )
 
 
