@@ -18,7 +18,7 @@ turned out to be wrong, and what changed as a result. That's what's here.
 > the test complains immediately instead of you finding out from a wrong
 > number on screen.
 >
-> This project has **109** of them. They run in about 4 seconds.
+> This project has **127** of them. They run in about 4 seconds.
 
 > **What's a "commit"?**
 > A saved checkpoint, with a note explaining what changed and why. Like a save
@@ -36,6 +36,7 @@ changed lines *wouldn't* tell you.
 - [Week 3 — Photos become calories](#week-3--photos-become-calories-24-july)
 - [Week 4 — The Coach](#week-4--the-coach-30-july--6-august)
 - [Week 5 — The app learns your body](#week-5--the-app-learns-your-body-9-august)
+- [Week 6 — The app remembers your meals](#week-6--the-app-remembers-your-meals-10-august)
 - [Every bug, and what it taught](#every-bug-and-what-it-taught)
 - [Where things stand](#where-things-stand)
 
@@ -825,6 +826,93 @@ it better, because it stopped chasing noise.
 
 ---
 
+# Week 6 — The app remembers your meals (10 August)
+
+## Meal memory — `f3b2dbb`
+
+**Added:** `api/memory.py` (130), `api/tests/test_memory.py` (**18 tests**),
+`0005_meal_memory.sql`, plus the one-tap offer in the review screen.
+**Running total: 127.**
+
+The feature the whole project is arguing for. Log a meal; log something
+similar later; the app recognises it and offers **your own corrected numbers**
+in one tap. Accuracy improves with use instead of staying flat.
+
+> **What's an "embedding"?**
+> A way of turning text into a list of numbers that captures what it *means*
+> rather than how it's spelled. Things with similar meanings get similar
+> numbers.
+>
+> Think of it as coordinates on a map, except with 768 axes instead of two.
+> "2 idlis with sambar" and "idli x2, sambar" land almost on top of each
+> other; "chicken caesar salad" lands far away. "Similar meaning" becomes
+> "short distance", which is now just arithmetic.
+
+> **What's "pgvector"?**
+> An add-on that teaches our existing database to store those number-lists and
+> search them by distance. There are separate products that only do this, but
+> keeping it in the database we already have means one less thing to run —
+> and, more importantly, **the same per-user lock applies**. A separate
+> service would need its own access control invented from scratch.
+
+### What the measurements said, before any code
+
+Three findings, each of which changed the design:
+
+**1. The default output is too big to index.** The model returns **3072**
+numbers per meal. pgvector's search indexes stop at 2000, so the obvious
+approach couldn't have been indexed at all. The model accepts a request for
+fewer, so we ask for **768** — indexable, a quarter the storage, and measured
+to work just as well.
+
+**2. Shorter vectors come back the wrong length.** This one would have been
+nasty. The full 3072 output is *normalised* — scaled so its length is exactly
+1, which the comparison maths assumes. At 768, the length came back as
+**0.59**.
+
+Nothing would have crashed. Every comparison would just have been quietly
+slightly wrong, forever. So we rescale them ourselves.
+
+**3. Does it actually tell meals apart?** Comparing everything to *"2 idlis
+with sambar and coconut chutney"*:
+
+| Score | Meal | Should match? |
+|---|---|---|
+| 0.9481 | "two steamed idlis served with sambar and fresh coconut chutney" | yes |
+| 0.9426 | "idli x2, sambar, coconut chutney" | yes |
+| 0.9245 | "3 idlis with sambar and chutney" | yes — same meal, different count |
+| **0.8299** | **"masala dosa with sambar and coconut chutney"** | **no** |
+| 0.5798 | "chicken biryani with raita" | no |
+| 0.4618 | "grilled chicken caesar salad" | no |
+
+**The dosa row set the threshold.** It shares two of three components — same
+sambar, same chutney — but a completely different main course. Offering it as
+"your usual" would put the wrong dish in someone's log. The cutoff is **0.90**,
+which clears it with room on both sides.
+
+The tests pin those exact measured numbers, so if anyone later nudges the
+threshold, the dosa case fails and explains why it exists.
+
+### Two deliberate refusals
+
+**A match is offered, never applied.** The app shows *"You've logged this
+before"* and a button. It never silently swaps in old numbers — that would be
+precisely the confident wrongness this whole project is designed against.
+
+**A failed embedding never blocks a log.** If the AI service is down, the meal
+still saves and simply has no memory entry. Losing real data because an
+optional convenience broke would be a straight downgrade.
+
+### A slot that had been empty since Phase 1
+
+The vision prompt has always had a `{{known_meals}}` placeholder, filled with
+the text "(none yet)" because there was no meal history to put in it. It now
+carries the user's recent meals — so the model is told what this person
+actually eats before it looks at the photo. That's the difference between
+reading an image as "dosa" and as "crepe".
+
+---
+
 # Every bug, and what it taught
 
 In order. The striking pattern: **almost none would have been caught by the
@@ -900,9 +988,9 @@ it goes green is how a real bug gets certified as correct behaviour.
 | | |
 |---|---|
 | Phase | 3 of 5 |
-| Tests | **109**, all offline, ~4 seconds |
+| Tests | **127**, all offline, ~4 seconds |
 | API endpoints | 14 |
-| Database tables | 8, every one with Row Level Security |
+| Database tables | 9, every one with Row Level Security |
 | Deployed | **No** — runs on one laptop |
 
 **Works:** signup and login · onboarding with personalised targets ·
@@ -911,8 +999,7 @@ about hidden cooking oil · full editing before saving · a dashboard of today
 against target · a Coach that answers from real logged data · adaptive targets
 learned from your own weigh-ins.
 
-**Not built yet:** meal memory (recognising a repeat meal and offering your own
-corrected numbers) · the recipe corpus · the Foodie assistant · an accuracy
+**Not built yet:** the recipe corpus · the Foodie assistant · an accuracy
 evaluation suite · deployment.
 
 ### Known limitations, stated plainly
