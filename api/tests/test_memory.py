@@ -8,6 +8,7 @@ from memory import (
     cosine_similarity,
     embed_meal,
     find_similar_meal,
+    meal_signature,
     normalize,
 )
 
@@ -71,6 +72,41 @@ class FakeClient:
         return FakeQuery(self.rows, self.calls)
 
 
+# --- what actually gets embedded -------------------------------------------
+
+def test_signature_is_just_the_food_names():
+    assert meal_signature(["Idli", "Sambar"]) == "idli, sambar"
+
+
+def test_signature_is_order_independent():
+    # "Idli, Sambar" and "Sambar, Idli" are the same meal.
+    assert meal_signature(["Sambar", "Idli"]) == meal_signature(["Idli", "Sambar"])
+
+
+def test_signature_deduplicates_and_ignores_blanks():
+    assert meal_signature(["Idli", "idli ", "", "  "]) == "idli"
+
+
+def test_signature_of_nothing_is_empty():
+    assert meal_signature([]) == ""
+
+
+def test_prose_summaries_leave_almost_no_margin():
+    # Measured live. The model wraps every meal in the same boilerplate
+    # ("A South Indian meal consisting of ..."), and that shared wording drags
+    # unrelated meals together.
+    prose_same, prose_different = 0.9135, 0.8989
+    names_same, names_different = 0.9714, 0.8573
+
+    # Prose would have worked -- by 0.0011. Any rewording could flip it.
+    assert prose_different < MATCH_THRESHOLD
+    assert MATCH_THRESHOLD - prose_different < 0.002
+
+    # Names give a real margin instead of a coin toss.
+    assert MATCH_THRESHOLD - names_different > 0.04
+    assert (names_same - names_different) > (prose_same - prose_different) * 5
+
+
 # --- normalising -----------------------------------------------------------
 
 def test_normalize_scales_to_unit_length():
@@ -110,26 +146,23 @@ def test_opposite_vectors_score_minus_one():
 # --- the threshold, pinned to real measurements ----------------------------
 
 def test_threshold_accepts_the_same_meal_reworded():
-    # Measured 0.9426 for "idli x2, sambar, coconut chutney" against
-    # "2 idlis with sambar and coconut chutney".
-    assert 0.9426 >= MATCH_THRESHOLD
-
-
-def test_threshold_accepts_the_same_dish_at_a_different_count():
-    # "3 idlis" vs "2 idlis" measured 0.9245. Still your usual meal; the
-    # portion is editable afterwards.
-    assert 0.9245 >= MATCH_THRESHOLD
+    # Measured live through the database, food-name signatures:
+    # "idlis, sambar, coconut chutney" against the stored "idli, sambar,
+    # coconut chutney".
+    assert 0.9714 >= MATCH_THRESHOLD
 
 
 def test_threshold_rejects_a_different_dish_sharing_side_orders():
-    # Masala dosa with the same sambar and chutney measured 0.8299. It shares
-    # two of three components and is a different meal -- offering it as "your
-    # usual" would put the wrong main course in someone's log.
-    assert 0.8299 < MATCH_THRESHOLD
+    # Masala dosa with the same sambar and chutney measured 0.8573, and
+    # uttapam 0.8700. Each shares two of three components and is a different
+    # meal -- offering either as "your usual" would put the wrong main course
+    # in someone's log.
+    assert 0.8573 < MATCH_THRESHOLD
+    assert 0.8700 < MATCH_THRESHOLD
 
 
 def test_threshold_rejects_an_unrelated_meal():
-    assert 0.5798 < MATCH_THRESHOLD  # chicken biryani with raita
+    assert 0.6403 < MATCH_THRESHOLD  # chicken biryani with raita
 
 
 # --- embedding -------------------------------------------------------------

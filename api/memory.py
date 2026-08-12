@@ -22,18 +22,33 @@ MODEL = "gemini-embedding-001"
 # measured to separate meals cleanly.
 EMBED_DIMENSIONS = 768
 
-# Measured against the live model, comparing meals to
-# "2 idlis with sambar and coconut chutney":
-#     0.9426  same meal, worded differently        -> should match
-#     0.9245  same dish, different count           -> should match
-#     0.8299  masala dosa with the same sides      -> must NOT match
-#     0.5798  same cuisine, different meal         -> must not match
-# 0.90 clears the dosa case with room either side. Raising this makes the
+# Measured through the live database, comparing a stored idli meal against
+# other meals written as food-name signatures:
+#     0.9714  same meal, worded differently        -> should match
+#     0.8700  uttapam with the same sides          -> must NOT match
+#     0.8573  masala dosa with the same sides      -> must NOT match
+# 0.90 sits in the 0.114-wide gap between those groups. Raising it makes the
 # feature shy; lowering it starts putting the wrong main course in someone's log.
 MATCH_THRESHOLD = 0.90
 
 # How many candidates the database returns before the threshold is applied.
 SEARCH_LIMIT = 3
+
+
+def meal_signature(names: list[str]) -> str:
+    """Canonical text for a meal: just its food names, deduped and ordered.
+
+    What gets embedded is NOT the model's prose summary. The model wraps every
+    meal in the same boilerplate -- "A South Indian meal consisting of ..." --
+    and that shared wording pulls unrelated meals together. Measured against
+    the live model, prose left only a 0.015 gap between the same meal reworded
+    (0.9135) and a different main course sharing two sides (0.8989). Stripping
+    it to food names widened that gap to 0.114 (0.9714 against 0.8573).
+
+    Sorted and lower-cased so "Idli, Sambar" and "sambar, idli" are one thing.
+    """
+    cleaned = sorted({n.strip().lower() for n in names if n and n.strip()})
+    return ", ".join(cleaned)
 
 
 def normalize(vector: list[float]) -> list[float]:

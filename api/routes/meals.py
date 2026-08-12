@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from analysis import ResolvedItem, totals_for
 from deps import get_current_user_client
-from memory import embed_meal
+from memory import embed_meal, meal_signature
 from routes.profile import load_profile_row
 from routes.weights import _current_target
 from targets import TargetsInput, calculate_targets
@@ -88,12 +88,15 @@ def _remember(client, user_id: str, meal_id: str, body: LogIn) -> None:
     memory is a convenience, and losing a real logged meal because an optional
     feature broke would be a straight downgrade.
     """
+    # Two different strings on purpose: the readable one is shown back to the
+    # user, the signature is what gets embedded. The model's prose wraps every
+    # meal in the same boilerplate, which pulls unrelated meals together.
     summary = (
         (body.analysis_json or {}).get("meal_summary")
         or body.caption
         or ", ".join(item.name for item in body.items)
     )
-    embedding = embed_meal(summary)
+    embedding = embed_meal(meal_signature([item.name for item in body.items]))
     if not embedding:
         return
     try:

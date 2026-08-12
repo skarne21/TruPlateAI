@@ -14,7 +14,7 @@ from analysis import (
     totals_for,
 )
 from deps import get_current_user_client
-from memory import embed_meal, find_similar_meal, recent_meal_summaries
+from memory import embed_meal, find_similar_meal, meal_signature, recent_meal_summaries
 from routes.profile import load_profile_row
 from transcribe import frequent_foods, transcribe_audio
 from vision import FatAnswer, VisionError, analyze_meal, build_prompt, identify_fat_from_photo
@@ -49,9 +49,14 @@ class AnalyzeResult(BaseModel):
     similar_meal: SimilarMeal | None = None
 
 
-def _previous_meal(client, user_id: str, summary: str) -> SimilarMeal | None:
-    """Find a close enough previous meal and load its corrected items."""
-    match = find_similar_meal(client, user_id, embed_meal(summary))
+def _previous_meal(client, user_id: str, items: list[ResolvedItem]) -> SimilarMeal | None:
+    """Find a close enough previous meal and load its corrected items.
+
+    Matches on food names rather than the model's prose summary -- see
+    memory.meal_signature for the measurements behind that.
+    """
+    signature = meal_signature([item.name for item in items])
+    match = find_similar_meal(client, user_id, embed_meal(signature))
     if match is None:
         return None
 
@@ -134,7 +139,7 @@ async def analyze(
         totals=totals_for(items),
         warnings=analysis.warnings,
         analysis_json=analysis.model_dump(),
-        similar_meal=_previous_meal(client, user_id, analysis.meal_summary),
+        similar_meal=_previous_meal(client, user_id, items),
     )
 
 
