@@ -18,7 +18,7 @@ turned out to be wrong, and what changed as a result. That's what's here.
 > the test complains immediately instead of you finding out from a wrong
 > number on screen.
 >
-> This project has **127** of them. They run in about 4 seconds.
+> This project has **131** of them. They run in about 4 seconds.
 
 > **What's a "commit"?**
 > A saved checkpoint, with a note explaining what changed and why. Like a save
@@ -832,7 +832,7 @@ it better, because it stopped chasing noise.
 
 **Added:** `api/memory.py` (130), `api/tests/test_memory.py` (**18 tests**),
 `0005_meal_memory.sql`, plus the one-tap offer in the review screen.
-**Running total: 127.**
+**Running total: 127**, then 131 after the margin fix below.
 
 The feature the whole project is arguing for. Log a meal; log something
 similar later; the app recognises it and offers **your own corrected numbers**
@@ -903,6 +903,48 @@ precisely the confident wrongness this whole project is designed against.
 still saves and simply has no memory entry. Losing real data because an
 optional convenience broke would be a straight downgrade.
 
+### The margin that wasn't there — `599ae84`
+
+Everything passed. Then, because a similarity of exactly **1.0000** looked
+suspiciously perfect, I measured what the real gap was in production.
+
+**It was 0.0146.**
+
+The offline measurements above used *user-style* phrasings — "2 idlis with
+sambar" versus "idli x2, sambar". But the app doesn't embed what the user
+typed. It embeds the **summary the AI writes**, and the AI wraps every meal in
+the same wording:
+
+> "A South Indian meal consisting of **idlis**, sambar, and coconut chutney."
+> "A South Indian meal consisting of **masala dosa**, sambar, and coconut chutney."
+
+Those sentences are nearly identical. The shared boilerplate drags unrelated
+meals together:
+
+| | same meal, reworded | dosa (different dish) | gap |
+|---|---|---|---|
+| AI's prose summary | 0.9135 | 0.8989 | **0.015** |
+| just the food names | 0.9714 | 0.8573 | **0.114** |
+
+The threshold of 0.90 still *worked* with prose — by 0.0011. Any rephrasing
+could have flipped it either way.
+
+**The fix:** embed only the food names — "coconut chutney, idli, sambar" —
+sorted and lower-cased so word order doesn't matter. Stripping the shared
+wording widened the margin nearly eightfold. The readable prose is still
+stored and shown to the user; only the thing being *compared* changed.
+
+**Lesson:** measuring the pieces isn't the same as measuring the path. My
+offline test used realistic-looking inputs, but not the inputs production
+actually generates — and the difference between "works" and "works by
+0.001" is invisible until you check.
+
+> **A test of mine was wrong again.** Writing this up, I added a test
+> asserting prose *would have* matched the dosa incorrectly. It failed —
+> because prose squeaked under the threshold by 0.0011 rather than going over
+> it. The honest claim isn't "it was broken", it's "it had no margin", and
+> the test now says that instead.
+
 ### A slot that had been empty since Phase 1
 
 The vision prompt has always had a `{{known_meals}}` placeholder, filled with
@@ -937,6 +979,7 @@ computer checking the code for obvious errors, and several passed the tests.**
 | 15 | Login page unstyled | It worked, so nothing forced it | Looking at it |
 | 16 | Every page slow by 1.5 seconds | Security machinery rebuilt per request | Timing each step, after two wrong guesses |
 | 17 | **Target could move 1050 cal/week** | Limit written per-event instead of per-week | Simulating four weeks |
+| 18 | Meal matching had a 0.0015 margin | Compared the AI's prose summaries, which all share the same boilerplate | Checking a suspiciously perfect 1.0000 score |
 
 ### The four themes
 
@@ -988,7 +1031,7 @@ it goes green is how a real bug gets certified as correct behaviour.
 | | |
 |---|---|
 | Phase | 3 of 5 |
-| Tests | **127**, all offline, ~4 seconds |
+| Tests | **131**, all offline, ~4 seconds |
 | API endpoints | 14 |
 | Database tables | 9, every one with Row Level Security |
 | Deployed | **No** — runs on one laptop |
