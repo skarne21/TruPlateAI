@@ -2,6 +2,8 @@ import pytest
 
 from recipes import (
     ALLERGEN_KEYWORDS,
+    MINOR_GRAMS,
+    normalize_exclusions,
     Ingredient,
     allergens_for,
     price_recipe,
@@ -78,10 +80,11 @@ def test_macros_are_summed_from_priced_ingredients():
     assert total["protein_g"] == pytest.approx(24 * 2 + 1)
 
 
-def test_a_recipe_with_an_unpriceable_ingredient_is_rejected():
-    # Publishing it would mean a recipe with numbers that are partly invented,
-    # which is the one thing this project refuses to do.
-    assert price_recipe([ing("Red lentils", 200), ing("Moon dust", 5)], price=fake_price) is None
+def test_a_recipe_missing_a_real_ingredient_is_rejected():
+    # Publishing it would mean a recipe whose numbers are partly invented,
+    # which is the one thing this project refuses to do. (A *trivial* unknown
+    # is skipped instead -- see the threshold tests below.)
+    assert price_recipe([ing("Red lentils", 200), ing("Moon dust", 200)], price=fake_price) is None
 
 
 def test_a_recipe_with_no_ingredients_is_rejected():
@@ -146,3 +149,101 @@ def test_recipe_search_without_an_embedding_returns_nothing(monkeypatch):
     client = FakeRpcClient()
     assert chat.build_recipe_tool(client, [])("dinner")["recipes"] == []
     assert client.calls == []  # never searched with nothing
+
+
+# --- tolerating what USDA can't price --------------------------------------
+
+def test_a_trivial_unpriceable_ingredient_is_skipped():
+    # All-or-nothing dropped the ENTIRE first corpus build -- 32 of 32 recipes
+    # -- because every real recipe contains something like asafoetida that USDA
+    # has never heard of. A gram of it changes nothing.
+    total = price_recipe(
+        [ing("Red lentils", 200), ing("Asafoetida", 1)], price=fake_price
+    )
+    assert total is not None
+    assert total["kcal"] == pytest.approx(700)
+
+
+def test_a_substantial_unpriceable_ingredient_still_rejects():
+    # 150g of tomato is real food. Skipping it would publish macros that are
+    # quietly missing a component, which is worse than having no recipe.
+    assert price_recipe(
+        [ing("Red lentils", 200), ing("Tomato", 150)], price=fake_price
+    ) is None
+
+
+def test_the_skip_threshold_is_where_it_claims_to_be():
+    just_under = price_recipe(
+        [ing("Red lentils", 200), ing("Mystery", MINOR_GRAMS - 1)], price=fake_price
+    )
+    just_over = price_recipe(
+        [ing("Red lentils", 200), ing("Mystery", MINOR_GRAMS + 1)], price=fake_price
+    )
+    assert just_under is not None
+    assert just_over is None
+
+
+def test_a_recipe_that_is_mostly_unpriceable_is_rejected():
+    # Many tiny unknowns still add up to a recipe we can't honestly price.
+    trivia = [ing(f"Spice {n}", MINOR_GRAMS - 1) for n in range(8)]
+    assert price_recipe([ing("Red lentils", 50), *trivia], price=fake_price) is None
+
+
+# --- the labels the UI actually stores --------------------------------------
+
+# Copied verbatim from web/app/onboarding/types.ts. Every one of these is a
+# thing a user can literally tick, so every one has to survive the round trip
+# into a filter that works.
+UI_EXCLUSION_OPTIONS = [
+    "Seafood", "Shellfish", "Dairy", "Eggs", "Peanuts", "Tree nuts",
+    "Gluten", "Soy", "Pork", "Beef", "Sesame", "Alcohol",
+]
+
+
+def test_every_option_a_user_can_tick_maps_to_a_real_group():
+    # The bug this exists to prevent: the profile stored "Seafood", recipes
+    # stored "seafood", and the database compared them with exact string
+    # overlap -- so the filter matched NOTHING and a seafood-allergic user
+    # would have been shown a mackerel recipe.
+    for label in UI_EXCLUSION_OPTIONS:
+        groups = normalize_exclusions([label])
+        assert groups, f"{label!r} maps to nothing"
+        assert all(g in ALLERGEN_KEYWORDS for g in groups), f"{label!r} -> {groups}"
+
+
+def test_tree_nuts_and_peanuts_map_to_their_separate_groups():
+    assert normalize_exclusions(["Tree nuts"]) == ["nuts"]
+    assert normalize_exclusions(["Peanuts"]) == ["peanuts"]
+
+
+def test_normalising_is_case_and_space_insensitive():
+    assert normalize_exclusions(["  SEAFOOD "]) == ["seafood"]
+    assert normalize_exclusions(["Tree Nuts"]) == ["nuts"]
+
+
+def test_an_unknown_exclusion_is_dropped_not_passed_through():
+    # A custom entry like "cilantro" isn't an allergen group. Passing it into
+    # the filter unchanged would match nothing and give false reassurance.
+    assert normalize_exclusions(["cilantro"]) == []
+
+
+def test_recipe_allergens_come_back_normalised():
+    # The model writes "Pork"; the keyword table derives "pork". Storing both
+    # is how a filter starts missing one of them.
+    result = allergens_for([ing("Pork belly")], ["Pork", "Soy"])
+    assert result == sorted(set(result))
+    assert all(g == g.lower() for g in result)
+    assert "pork" in result and "Pork" not in result
+
+
+def test_a_recipe_and_a_profile_actually_overlap_end_to_end():
+    recipe = allergens_for([ing("Mackerel fillet")], [])
+    profile = normalize_exclusions(["Seafood"])
+    assert set(recipe) & set(profile), (recipe, profile)
+
+
+def test_minced_garlic_is_not_beef():
+    # "mince" as a beef keyword flagged a tofu teriyaki bowl as containing
+    # beef, because it matched "minced garlic".
+    assert "beef" not in allergens_for([ing("Minced garlic"), ing("Firm tofu")], [])
+    assert "beef" in allergens_for([ing("Beef mince")], [])

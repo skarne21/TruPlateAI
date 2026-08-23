@@ -45,8 +45,60 @@ ALLERGEN_KEYWORDS: dict[str, list[str]] = {
     "soy": ["soy", "soya", "tofu", "tempeh", "edamame", "miso", "tamari"],
     "sesame": ["sesame", "tahini", "gingelly", "til "],
     "pork": ["pork", "bacon", "ham", "prosciutto", "chorizo", "pancetta", "lard"],
-    "beef": ["beef", "steak", "veal", "brisket", "mince"],
+    # NOT a bare "mince": it matched "minced garlic" and flagged a tofu
+    # teriyaki bowl as containing beef.
+    "beef": ["beef", "steak", "veal", "brisket", "minced beef", "beef mince"],
+    "alcohol": ["wine", "beer", "rum", "vodka", "whisky", "whiskey", "brandy",
+                "sherry", "mirin", "sake", "liqueur", "bourbon"],
 }
+
+# What a user can tick in onboarding, mapped to the groups above.
+#
+# This exists because the two vocabularies were different and nothing noticed:
+# the profile stored "Seafood", recipes stored "seafood", and the database
+# compared them with exact string overlap -- so the safety filter matched
+# NOTHING. Both sides now go through here before they ever meet.
+EXCLUSION_ALIASES: dict[str, str] = {
+    "tree nuts": "nuts",
+    "treenuts": "nuts",
+    "nuts": "nuts",
+    "peanut": "peanuts",
+    "shell fish": "shellfish",
+    "fish": "seafood",
+    "milk": "dairy",
+    "lactose": "dairy",
+    "egg": "eggs",
+    "wheat": "gluten",
+}
+
+
+def normalize_exclusions(labels: list[str]) -> list[str]:
+    """Turn whatever the user ticked into canonical allergen groups.
+
+    Anything unrecognised is dropped rather than passed through: a custom entry
+    like "cilantro" is not an allergen group, and forwarding it into the filter
+    would match nothing while looking like protection.
+    """
+    groups = set()
+    for label in labels or []:
+        key = " ".join(str(label).lower().split())
+        if key in ALLERGEN_KEYWORDS:
+            groups.add(key)
+        elif key in EXCLUSION_ALIASES:
+            groups.add(EXCLUSION_ALIASES[key])
+    return sorted(groups)
+
+
+# An unpriceable ingredient lighter than this is skipped rather than sinking
+# the recipe. Real recipes are full of asafoetida, curry leaves and pinches of
+# things USDA has never heard of -- being strict about them dropped 32 of 32
+# recipes on the first corpus build. Anything heavier is real food, and
+# omitting it would publish macros quietly missing a component.
+MINOR_GRAMS = 30.0
+
+# Even many tiny unknowns eventually add up to a recipe we can't honestly
+# price. Reject once this share of the total mass is unaccounted for.
+MAX_UNPRICED_FRACTION = 0.15
 
 
 class Ingredient(BaseModel):
@@ -63,7 +115,10 @@ def allergens_for(ingredients: list[Ingredient], declared: list[str]) -> list[st
     the result but never narrow it, because a model that forgets an allergen
     must not be able to hide one the keyword table found.
     """
-    found = set(declared or [])
+    # The model writes "Pork"; the keyword table derives "pork". Storing both
+    # is how a filter starts missing one of them, so everything is normalised
+    # to the same canonical group before it is stored.
+    found = set(normalize_exclusions(declared or []))
 
     for ingredient in ingredients:
         name = ingredient.name.lower()
@@ -77,7 +132,7 @@ def allergens_for(ingredients: list[Ingredient], declared: list[str]) -> list[st
 def price_ingredient(query: str, grams: float) -> dict[str, float] | None:
     """USDA macros for one ingredient, or None if it can't be priced."""
     try:
-        match = usda.pick_best_match(usda.search_food(query))
+        match = usda.pick_best_match(usda.search_food(query), allow_branded=True)
     except Exception:
         return None
     if match is None:
@@ -92,23 +147,36 @@ def price_recipe(
     ingredients: list[Ingredient],
     price: Callable[[str, float], dict[str, float] | None] = price_ingredient,
 ) -> dict[str, float] | None:
-    """Sum a recipe's macros from USDA, or None if any ingredient can't be priced.
+    """Sum a recipe's macros from USDA, or None if too much of it can't be priced.
 
-    All-or-nothing on purpose. A recipe published with one ingredient missing
-    would carry numbers that are partly guesswork, presented with the same
-    confidence as the rest -- which is the failure this whole project is built
-    to avoid. Better to drop the recipe.
+    A recipe published with a real ingredient missing would carry numbers that
+    are partly guesswork, presented as confidently as the rest -- the failure
+    this project exists to avoid. But being absolute about it dropped every
+    single recipe on the first corpus build, because real recipes are full of
+    pinches of things USDA has never heard of.
+
+    So: skip unpriceable ingredients too small to matter, reject the recipe if
+    a substantial one fails, and reject it anyway if the small ones add up.
     """
     if not ingredients:
         return None
 
     total = {"kcal": 0.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0}
+    total_grams = sum(i.grams for i in ingredients) or 1.0
+    unpriced_grams = 0.0
+
     for ingredient in ingredients:
         macros = price(ingredient.usda_query, ingredient.grams)
         if macros is None:
-            return None
+            if ingredient.grams > MINOR_GRAMS:
+                return None
+            unpriced_grams += ingredient.grams
+            continue
         for key in total:
             total[key] += macros.get(key) or 0.0
+
+    if unpriced_grams / total_grams > MAX_UNPRICED_FRACTION:
+        return None
 
     return total
 

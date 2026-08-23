@@ -17,6 +17,7 @@ from chat import (
     summarise_history,
 )
 from deps import get_current_user_client
+from recipes import normalize_exclusions
 from routes.profile import load_profile_row
 
 router = APIRouter()
@@ -117,7 +118,9 @@ def chat(body: ChatIn, user=Depends(get_current_user_client)):
     if body.assistant == "foodie":
         # Exclusions come from the profile, not from anything the model can
         # set -- the recipe tool has no parameter for them at all.
-        tools = [*tools, build_recipe_tool(client, profile.get("exclusions") or [])]
+        tools = [*tools, build_recipe_tool(
+            client, normalize_exclusions(profile.get("exclusions") or [])
+        )]
         prompt_template = FOODIE_PROMPT
     else:
         prompt_template = SYSTEM_PROMPT

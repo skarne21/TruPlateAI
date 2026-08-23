@@ -92,7 +92,9 @@ def _energy_per_100g(food: dict) -> float | None:
 
 
 def pick_best_match(
-    results: list[dict], expected_kcal_per_100g: float | None = None
+    results: list[dict],
+    expected_kcal_per_100g: float | None = None,
+    allow_branded: bool = False,
 ) -> dict | None:
     """Pick the best food from USDA results.
 
@@ -118,6 +120,15 @@ def pick_best_match(
     relevance stays the primary signal.
     """
     candidates = [f for f in results if f.get("dataType") != "Branded"][:MAX_CANDIDATES]
+
+    # Branded rows are noise for a meal photo -- 23 jars of "GHEE" outrank the
+    # generic entry. But a recipe ingredient is a pantry staple, and some exist
+    # ONLY as branded rows: "vegetable oil" returns 25 results, every one
+    # Branded. Callers pricing ingredients opt in, and generic still wins when
+    # both are present because it's a fallback rather than a preference.
+    if not candidates and allow_branded:
+        candidates = results[:MAX_CANDIDATES]
+
     if not candidates:
         return None
 

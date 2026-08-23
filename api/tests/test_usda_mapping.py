@@ -169,3 +169,25 @@ def test_known_limitation_homonym_match():
     # spot and fix it, not a smarter matcher.
     match = pick_best_match(FIXTURES["poha"])
     assert "Groundcherries" in match["description"]
+
+
+def test_branded_can_be_allowed_for_pantry_staples():
+    # Excluding Branded is right for meal photos, where 23 jars of "GHEE"
+    # outrank the generic entry. It's wrong for recipe ingredients: "vegetable
+    # oil" returns 25 results and every one is Branded, so excluding them finds
+    # nothing at all.
+    only_branded = [
+        {"fdcId": 1, "dataType": "Branded", "description": "VEGETABLE OIL",
+         "foodNutrients": [{"nutrientId": ENERGY_KCAL, "value": 884.0}]},
+    ]
+    assert pick_best_match(only_branded) is None
+    assert pick_best_match(only_branded, allow_branded=True)["description"] == "VEGETABLE OIL"
+
+
+def test_allowing_branded_still_prefers_a_generic_match():
+    # Branded is a fallback, not a preference: the generic row still wins.
+    mixed = [
+        {"fdcId": 1, "dataType": "Branded", "description": "SOME BRAND OATS", "foodNutrients": []},
+        {"fdcId": 2, "dataType": "SR Legacy", "description": "Oats, raw", "foodNutrients": []},
+    ]
+    assert pick_best_match(mixed, allow_branded=True)["description"] == "Oats, raw"
