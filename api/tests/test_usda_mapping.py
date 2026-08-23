@@ -2,7 +2,9 @@ import json
 from pathlib import Path
 
 import pytest
+import requests
 
+import usda
 from usda import ENERGY_KCAL, PROTEIN, CARBS, FAT, macros_for_grams, pick_best_match
 
 FIXTURES = json.loads(
@@ -70,6 +72,63 @@ def test_nutrients_matched_by_id_not_name():
         ]
     }
     assert macros_for_grams(food, 100)["kcal"] == pytest.approx(100.0)
+
+
+class FlakyHttp:
+    """Fails with the given status a few times, then succeeds."""
+
+    def __init__(self, failures: int, status: int = 404):
+        self.failures = failures
+        self.status = status
+        self.attempts = 0
+
+    def __call__(self, url, params=None, timeout=None):
+        self.attempts += 1
+        response = type("R", (), {})()
+        query = "&".join(f"{k}={v}" for k, v in (params or {}).items())
+        response.url = f"{url}?{query}"
+        if self.attempts <= self.failures:
+            response.status_code = self.status
+
+            def raise_for_status(_url=response.url):
+                # requests puts the full URL -- API key and all -- in the message.
+                raise requests.HTTPError(f"{self.status} Client Error for url: {_url}")
+
+            response.raise_for_status = raise_for_status
+        else:
+            response.status_code = 200
+            response.raise_for_status = lambda: None
+            response.json = lambda: {"foods": [{"fdcId": 1, "dataType": "Survey (FNDDS)",
+                                                "description": "Idli", "foodNutrients": []}]}
+        return response
+
+
+def test_a_transient_failure_is_retried(monkeypatch):
+    # USDA was measured returning 404 on 13 of 20 identical requests. Without a
+    # retry, two thirds of foods would silently fall back to the AI's estimate
+    # -- which is exactly the grounding this app is built on.
+    http = FlakyHttp(failures=2)
+    monkeypatch.setattr(usda.requests, "get", http)
+    assert usda.search_food("idli")[0]["description"] == "Idli"
+    assert http.attempts == 3
+
+
+def test_retries_eventually_give_up(monkeypatch):
+    http = FlakyHttp(failures=99)
+    monkeypatch.setattr(usda.requests, "get", http)
+    with pytest.raises(requests.RequestException):
+        usda.search_food("idli")
+    assert http.attempts == usda.MAX_ATTEMPTS
+
+
+def test_the_api_key_never_reaches_the_error_message(monkeypatch):
+    # requests embeds the full URL, including api_key=..., in HTTPError. That
+    # message travels into logs and bug reports, so the key must be stripped.
+    monkeypatch.setenv("USDA_API_KEY", "SUPER-SECRET-KEY")
+    monkeypatch.setattr(usda.requests, "get", FlakyHttp(failures=99))
+    with pytest.raises(requests.RequestException) as excinfo:
+        usda.search_food("idli")
+    assert "SUPER-SECRET-KEY" not in str(excinfo.value)
 
 
 def test_sanity_check_overrides_an_implausible_top_match():

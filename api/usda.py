@@ -5,10 +5,18 @@ The LLM identifies foods and portions; this module supplies the actual numbers
 """
 
 import os
+import re
+import time
 
 import requests
 
 SEARCH_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
+
+# USDA returns transient 404s -- 13 of 20 identical requests failed in one
+# measurement. Retrying keeps foods on real database numbers instead of
+# silently degrading them to the model's estimate.
+MAX_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 0.4
 
 # USDA nutrient IDs. Match on ID, never on name -- "Energy" appears twice per
 # food (once as KCAL, once as kJ), so the name alone is ambiguous.
@@ -35,25 +43,45 @@ SANITY_RATIO = 2.0
 MAX_CANDIDATES = 10
 
 
+def _without_key(message: str) -> str:
+    """Strip the API key out of an error message.
+
+    `requests` puts the full request URL into HTTPError, and ours carries
+    `api_key=...`. That message travels straight into server logs and bug
+    reports, so the key has to come out before it can be raised.
+    """
+    return re.sub(r"(api_key=)[^&\s\"']+", r"\1REDACTED", message)
+
+
 def search_food(query: str, page_size: int = 25) -> list[dict]:
     """Search USDA for a food. Returns raw result dicts, USDA's ranking preserved.
+
+    Retries, because USDA is genuinely unreliable: 13 of 20 identical requests
+    came back 404 during one measurement. Without retrying, most foods would
+    fall back to the model's estimate -- and USDA grounding is the whole point.
 
     Note: USDA's own `dataType` query parameter is unusable -- passing
     `dataType=Survey (FNDDS)` returns 400 from their nginx because the
     URL-encoded parentheses are rejected before reaching the application.
     Filtering happens in pick_best_match() instead. Don't "fix" this back.
     """
-    response = requests.get(
-        SEARCH_URL,
-        params={
-            "api_key": os.environ["USDA_API_KEY"],
-            "query": query,
-            "pageSize": page_size,
-        },
-        timeout=10,
-    )
-    response.raise_for_status()
-    return response.json().get("foods", [])
+    params = {
+        "api_key": os.environ["USDA_API_KEY"],
+        "query": query,
+        "pageSize": page_size,
+    }
+
+    for attempt in range(MAX_ATTEMPTS):
+        try:
+            response = requests.get(SEARCH_URL, params=params, timeout=10)
+            response.raise_for_status()
+            return response.json().get("foods", [])
+        except requests.RequestException as exc:
+            if attempt == MAX_ATTEMPTS - 1:
+                raise type(exc)(_without_key(str(exc))) from None
+            time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+
+    return []  # unreachable; the loop either returns or raises
 
 
 def _energy_per_100g(food: dict) -> float | None:
