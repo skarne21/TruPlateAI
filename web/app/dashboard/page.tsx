@@ -14,14 +14,13 @@ type DayTotals = {
   meal_count: number;
 };
 
-// Foodie isn't built yet, so it stays inert and dimmed rather than implying a
-// feature that doesn't exist.
+// Every destination is real now.
 const NAV_ITEMS = [
   { label: "Today", href: "/dashboard" },
   { label: "Log", href: "/log" },
   { label: "Coach", href: "/coach" },
+  { label: "Foodie", href: "/foodie" },
   { label: "Weigh-in", href: "/weight" },
-  { label: "Foodie", href: null },
 ];
 
 function localDate(): string {

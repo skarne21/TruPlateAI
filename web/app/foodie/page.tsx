@@ -1,5 +1,5 @@
 import AssistantChat from "../AssistantChat";
 
 export default function Page() {
-  return <AssistantChat assistant="coach" />;
+  return <AssistantChat assistant="foodie" />;
 }

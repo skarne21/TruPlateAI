@@ -11,6 +11,7 @@ from datetime import date, timedelta
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
+import memory
 import usda
 from targets import TargetsInput, calculate_targets
 from vision import friendly_genai_error
@@ -24,6 +25,10 @@ class ChatError(Exception):
 # Turns of conversation resent per request. Durable facts arrive from SQL, so
 # the Coach's memory of your history does not depend on what fits in here.
 HISTORY_LIMIT = 20
+
+# Recipes returned per search. Enough to choose from, few enough that the
+# model quotes them rather than summarising a wall of options.
+RECIPE_RESULTS = 5
 
 # Measured: 7.70s to first token with thinking on, 0.82s with it off. Chat is
 # judged on responsiveness and the reasoning here is light -- the numbers are
@@ -54,6 +59,30 @@ BOUNDARIES
   can alongside.
 - Do not endorse very low calorie intakes or rapid weight loss. Their targets
   are already capped at safe rates by the app.
+
+{summary}
+"""
+
+FOODIE_PROMPT = """You are Foodie in TruPlate AI, a nutrition tracking app. You help the user
+decide what to actually cook or eat next.
+
+HOW TO ANSWER
+- Suggest specific dishes, not general advice. Name them and say what they cost
+  in calories and protein.
+- Fit what they have LEFT today, shown below. If they've barely any calories
+  left, say so and suggest something small rather than pretending otherwise.
+- Use search_recipes for suggestions. Only present recipes it returned -- never
+  invent one, and never describe a recipe you have not been given.
+- Prefer their cuisines and respect their budget level.
+- If they ask for something you have no recipe for, say so and offer the
+  closest thing you do have.
+
+BOUNDARIES
+- Nutrition guidance, not medical advice. Anything clinical -- medication, a
+  diagnosed condition, symptoms -- gets a brief "worth asking a doctor or
+  dietitian" and nothing more.
+- Recipe search already excludes anything they cannot eat. Do not attempt to
+  work around it, and do not repeat an exclusion back as if it were optional.
 
 {summary}
 """
@@ -221,6 +250,58 @@ def build_tools(client, user_id: str, today: date) -> list:
         }
 
     return [get_logs, usda_lookup]
+
+
+def build_recipe_tool(client, exclusions: list[str]):
+    """Recipe search, bound to this user's exclusions.
+
+    The signature has NO exclusions parameter. They're closed over from the
+    caller's profile and applied inside the database query, so a model asked
+    to "ignore my allergies" has nothing to change -- the filter isn't
+    reachable from anything it controls (CLAUDE.md invariant #5).
+    """
+
+    def search_recipes(
+        query: str, max_kcal: float | None = None, min_protein_g: float | None = None
+    ) -> dict:
+        """Find recipes matching a description, within optional macro limits.
+
+        Only ever returns recipes safe for this user to eat.
+
+        Args:
+            query: What they feel like eating, e.g. "quick high protein dinner".
+            max_kcal: Most calories the meal may have, if it matters.
+            min_protein_g: Least protein the meal must have, if it matters.
+        """
+        embedding = memory.embed_meal(query)
+        if not embedding:
+            return {"recipes": [], "note": "Couldn't search recipes just now."}
+
+        try:
+            rows = client.rpc("match_recipes", {
+                "query_embedding": embedding,
+                "exclusions": exclusions,
+                "max_kcal": max_kcal,
+                "min_protein": min_protein_g,
+                "match_count": RECIPE_RESULTS,
+            }).execute().data
+        except Exception:
+            return {"recipes": [], "note": "Recipe search is unavailable right now."}
+
+        return {
+            "recipes": [
+                {
+                    "title": r["title"], "cuisine": r["cuisine"],
+                    "cost_level": r["cost_level"], "minutes": r["minutes"],
+                    "kcal": round(r["kcal"]), "protein_g": round(r["protein_g"]),
+                    "ingredients": [i["name"] for i in (r.get("ingredients") or [])],
+                    "steps": r.get("steps") or [],
+                }
+                for r in rows
+            ]
+        }
+
+    return search_recipes
 
 
 def stream_reply(system_prompt: str, history: list[dict], tools: list, *, client=None):

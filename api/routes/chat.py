@@ -7,7 +7,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from chat import (
+    FOODIE_PROMPT,
     SYSTEM_PROMPT,
+    build_recipe_tool,
     build_summary,
     build_tools,
     fetch_days,
@@ -19,7 +21,9 @@ from routes.profile import load_profile_row
 
 router = APIRouter()
 
-ASSISTANT = "coach"
+
+
+ASSISTANTS = ("coach", "foodie")
 
 
 class ChatIn(BaseModel):
@@ -27,6 +31,7 @@ class ChatIn(BaseModel):
     # The client's local date, for the same reason /log takes one: "today" is a
     # local-calendar question and the server does no timezone maths.
     today: date
+    assistant: str = "coach"
 
 
 class Message(BaseModel):
@@ -56,7 +61,7 @@ def stream_ndjson(
     yield json.dumps({"type": "done"}) + "\n"
 
 
-def _conversation(client, user_id: str) -> tuple[str, list[dict]]:
+def _conversation(client, user_id: str, assistant: str = "coach") -> tuple[str, list[dict]]:
     """This user's ongoing Coach conversation and its messages, in one round trip.
 
     The messages are embedded rather than fetched separately -- one round trip
@@ -67,7 +72,7 @@ def _conversation(client, user_id: str) -> tuple[str, list[dict]]:
         client.table("conversations")
         .select("id, messages(role, content, created_at)")
         .eq("user_id", user_id)
-        .eq("assistant", ASSISTANT)
+        .eq("assistant", assistant)
         .execute()
     ).data
 
@@ -78,15 +83,17 @@ def _conversation(client, user_id: str) -> tuple[str, list[dict]]:
         ]
 
     created = client.table("conversations").insert(
-        {"user_id": user_id, "assistant": ASSISTANT}
+        {"user_id": user_id, "assistant": assistant}
     ).execute()
     return created.data[0]["id"], []
 
 
 @router.get("/chat/history", response_model=list[Message])
-def chat_history(user=Depends(get_current_user_client)):
+def chat_history(assistant: str = "coach", user=Depends(get_current_user_client)):
+    if assistant not in ASSISTANTS:
+        raise HTTPException(400, f"Unknown assistant: {assistant}")
     user_id, client = user
-    _, stored = _conversation(client, user_id)
+    _, stored = _conversation(client, user_id, assistant)
     return [Message(**row) for row in stored]
 
 
@@ -95,15 +102,25 @@ def chat(body: ChatIn, user=Depends(get_current_user_client)):
     message = body.message.strip()
     if not message:
         raise HTTPException(400, "Say something first")
+    if body.assistant not in ASSISTANTS:
+        raise HTTPException(400, f"Unknown assistant: {body.assistant}")
 
     user_id, client = user
     profile = load_profile_row(client, user_id)
-    conversation_id, stored = _conversation(client, user_id)
+    conversation_id, stored = _conversation(client, user_id, body.assistant)
     history = summarise_history([*stored, {"role": "user", "content": message}])
 
     # Real numbers, computed in SQL, handed to the model as text.
     summary = build_summary(profile, body.today, fetch_days(client, user_id, body.today))
     tools = build_tools(client, user_id, body.today)
+
+    if body.assistant == "foodie":
+        # Exclusions come from the profile, not from anything the model can
+        # set -- the recipe tool has no parameter for them at all.
+        tools = [*tools, build_recipe_tool(client, profile.get("exclusions") or [])]
+        prompt_template = FOODIE_PROMPT
+    else:
+        prompt_template = SYSTEM_PROMPT
 
     def persist(reply_text: str) -> None:
         if not reply_text.strip():
@@ -115,7 +132,7 @@ def chat(body: ChatIn, user=Depends(get_current_user_client)):
              "role": "assistant", "content": reply_text},
         ]).execute()
 
-    reply = stream_reply(SYSTEM_PROMPT.format(summary=summary), history, tools)
+    reply = stream_reply(prompt_template.format(summary=summary), history, tools)
     return StreamingResponse(
         stream_ndjson(reply, persist),
         media_type="application/x-ndjson",
