@@ -15,11 +15,11 @@ import os
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
+import models
 from pydantic import BaseModel, ValidationError
 
 from vision import VisionError, friendly_genai_error
 
-MODEL = "gemini-2.5-flash"
 
 
 class NutritionLabel(BaseModel):
@@ -93,7 +93,7 @@ def read_label(
 
     try:
         response = client.models.generate_content(
-            model=MODEL,
+            model=models.LABEL,
             contents=[types.Part.from_bytes(data=image, mime_type=mime_type), LABEL_PROMPT],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",

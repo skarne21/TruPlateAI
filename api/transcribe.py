@@ -15,11 +15,11 @@ from collections import Counter
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
+import models
 from pydantic import BaseModel, ValidationError
 
 from vision import VisionError, friendly_genai_error
 
-MODEL = "gemini-2.5-flash"
 
 # How many past foods to feed the model as vocabulary, and how far back to look.
 VOCAB_SIZE = 25
@@ -92,7 +92,7 @@ def transcribe_audio(
 
     try:
         response = client.models.generate_content(
-            model=MODEL,
+            model=models.TRANSCRIBE,
             contents=[types.Part.from_bytes(data=audio, mime_type=mime_type), prompt],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",

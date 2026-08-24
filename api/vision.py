@@ -9,9 +9,9 @@ import os
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
+import models
 from pydantic import BaseModel, ValidationError
 
-MODEL = "gemini-2.5-flash"
 
 
 class VisionError(Exception):
@@ -44,7 +44,7 @@ def _generate(client: genai.Client, contents: list, config) -> types.GenerateCon
     friendly_genai_error for the same reason.
     """
     try:
-        return client.models.generate_content(model=MODEL, contents=contents, config=config)
+        return client.models.generate_content(model=models.VISION, contents=contents, config=config)
     except genai_errors.APIError as exc:
         raise VisionError(friendly_genai_error(exc)) from exc
 

@@ -15,7 +15,8 @@ import os
 from google import genai
 from google.genai import types
 
-MODEL = "gemini-embedding-001"
+import models
+
 
 # The model returns 3072 numbers by default, which pgvector cannot index --
 # its index types stop at 2000. 768 is indexable, a quarter the storage, and
@@ -88,7 +89,7 @@ def embed_meal(summary: str, *, client: genai.Client | None = None) -> list[floa
     client = client or genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     try:
         response = client.models.embed_content(
-            model=MODEL,
+            model=models.EMBEDDING,
             contents=summary.strip(),
             config=types.EmbedContentConfig(output_dimensionality=EMBED_DIMENSIONS),
         )

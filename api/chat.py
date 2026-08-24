@@ -12,11 +12,11 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 import memory
+import models
 import usda
 from targets import TargetsInput, calculate_targets
 from vision import friendly_genai_error
 
-MODEL = "gemini-2.5-flash"
 
 
 class ChatError(Exception):
@@ -327,7 +327,7 @@ def stream_reply(system_prompt: str, history: list[dict], tools: list, *, client
     # metric names, hence the shared translation.
     try:
         for chunk in client.models.generate_content_stream(
-            model=MODEL, contents=contents, config=config
+            model=models.CHAT, contents=contents, config=config
         ):
             if chunk.text:
                 yield chunk.text
