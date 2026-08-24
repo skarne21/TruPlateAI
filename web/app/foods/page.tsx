@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
+import { downscaleImage } from "@/lib/image";
 import { createClient } from "@/lib/supabase/client";
 import BarcodeScanner from "./BarcodeScanner";
 import {
@@ -22,6 +23,7 @@ export default function FoodsPage() {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [status, setStatus] = useState<"loading" | "ready">("loading");
+  const labelInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +67,40 @@ export default function FoodsPage() {
       setNote("Found it — check the numbers against the label before saving.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function readLabel(file: File) {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const form = new FormData();
+      form.append("image", await downscaleImage(file), "label.jpg");
+      const res = await apiFetch("/foods/label", { method: "POST", body: form });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => null);
+        throw new Error(detail?.detail || "Couldn't read that label. Try a clearer photo.");
+      }
+      const read = await res.json();
+      setDraft((prev) => ({
+        ...prev,
+        name: read.product_name || prev.name,
+        kcal_per_100g: String(Math.round(read.kcal_per_100g)),
+        protein_per_100g: String(Math.round(read.protein_per_100g * 10) / 10),
+        carbs_per_100g: String(Math.round(read.carbs_per_100g * 10) / 10),
+        fat_per_100g: String(Math.round(read.fat_per_100g * 10) / 10),
+      }));
+      setShowForm(true);
+      setNote(
+        read.basis === "per_serving"
+          ? `Read from a per-serving panel (${Math.round(read.serving_grams ?? 0)}g) and converted to per 100g. Check it against the packet.`
+          : "Read from the label. Check it against the packet before saving."
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't read that label");
     } finally {
       setBusy(false);
     }
@@ -173,6 +209,27 @@ export default function FoodsPage() {
               type: "number",
               inputMode: "decimal",
             })}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => labelInput.current?.click()}
+              className="mt-3 w-full border border-dashed border-border px-3.5 py-2.5 text-sm font-semibold text-ink-dim disabled:opacity-40"
+            >
+              {busy ? "Reading label..." : "Photograph the nutrition label instead"}
+            </button>
+            <input
+              ref={labelInput}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) readLabel(file);
+                e.target.value = "";
+              }}
+            />
+
             <div className="mt-4 flex gap-2">
               <button
                 type="button"

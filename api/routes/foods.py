@@ -4,7 +4,11 @@ from pydantic import BaseModel
 
 from deps import get_current_user_client
 from barcode import BarcodeProduct, lookup_barcode
+from fastapi import File, UploadFile
+
 from foods import SavedFood
+from label import read_label, per_100g
+from vision import VisionError
 
 router = APIRouter()
 
@@ -88,3 +92,44 @@ def scan_barcode(code: str, user=Depends(get_current_user_client)):
             404, "No product found for that barcode. You can add it by hand instead."
         )
     return product
+
+
+class LabelResult(BaseModel):
+    """A nutrition panel, read off a photo and converted to per-100g."""
+
+    product_name: str | None
+    kcal_per_100g: float
+    protein_per_100g: float
+    carbs_per_100g: float
+    fat_per_100g: float
+    basis: str
+    serving_grams: float | None
+
+
+@router.post("/foods/label", response_model=LabelResult)
+async def scan_label(image: UploadFile = File(...), user=Depends(get_current_user_client)):
+    """Read a nutrition panel from a photo, for products no barcode lookup knows.
+
+    Fills the form for review; nothing is saved from here. The model is
+    transcribing printed numbers, not recalling what a product contains -- and
+    the user checks them against the packet before they become anything.
+    """
+    try:
+        label = read_label(await image.read(), image.content_type or "image/jpeg")
+    except VisionError as e:
+        raise HTTPException(502, str(e))
+
+    macros = per_100g(label)
+    if macros is None:
+        raise HTTPException(
+            422,
+            "Couldn't read enough from that label. Make sure the calories and, if "
+            "the panel is per serving, the serving weight are both in shot.",
+        )
+
+    return LabelResult(
+        product_name=label.product_name,
+        basis=label.basis,
+        serving_grams=label.serving_grams,
+        **macros,
+    )
