@@ -18,7 +18,7 @@ turned out to be wrong, and what changed as a result. That's what's here.
 > the test complains immediately instead of you finding out from a wrong
 > number on screen.
 >
-> This project has **131** of them. They run in about 4 seconds.
+> This project has **195** of them. They run in about 8 seconds.
 
 > **What's a "commit"?**
 > A saved checkpoint, with a note explaining what changed and why. Like a save
@@ -37,6 +37,7 @@ changed lines *wouldn't* tell you.
 - [Week 4 — The Coach](#week-4--the-coach-30-july--6-august)
 - [Week 5 — The app learns your body](#week-5--the-app-learns-your-body-9-august)
 - [Week 6 — The app remembers your meals](#week-6--the-app-remembers-your-meals-10-august)
+- [Week 7 — Suggestions, and your own foods](#week-7--suggestions-and-your-own-foods-1124-august)
 - [Every bug, and what it taught](#every-bug-and-what-it-taught)
 - [Where things stand](#where-things-stand)
 
@@ -955,6 +956,131 @@ reading an image as "dosa" and as "crepe".
 
 ---
 
+# Week 7 — Suggestions, and your own foods (11–24 August)
+
+## Foodie, and a recipe corpus — `153bf80`
+
+**Added:** `api/recipes.py`, `scripts/build_recipes.py`, `0006_recipes.sql`,
+and Foodie itself. **Running total: 149.**
+
+Recipes are **written by the AI and priced by USDA** — the same split meals
+use. The model produces the title, steps and per-ingredient gram weights; every
+ingredient is then looked up and the macros summed. Nothing about the numbers
+is invented.
+
+Foodie reuses the Coach's machinery entirely. The two differed only in wording
+and which conversation they use, so the chat page became one component with a
+setting.
+
+### The allergy filter matched nothing at all
+
+The feature this project makes the most noise about — *allergies enforced in
+code, not by the AI* — did not work. At all.
+
+The signup form saves **"Seafood"**. Recipes saved **"seafood"**. The database
+compares them as exact text. They never matched, so nothing was ever filtered,
+and a seafood-allergic user would have been shown a mackerel recipe.
+
+Proved against the real database:
+
+```
+excluding ['Eggs']  -> 7 recipes  (both egg dishes included)
+excluding ['eggs']  -> 5 recipes  (both correctly gone)
+```
+
+**Every test passed.** All 149 of them. Because I had written the tests using
+lowercase on both sides — they never once used a label a person can actually
+tick in the app. There is now a test that walks the real list from the signup
+screen and fails if any entry maps to nothing, which immediately caught that
+**"Tree nuts" matched no category whatsoever.**
+
+Two more fell out of the same screenful of output: allergens were being stored
+in two spellings at once (`"Pork"` *and* `"pork"`), and `"mince"` in the beef
+list was matching **"minced garlic"**, so a tofu dish was labelled as containing
+beef.
+
+**Lesson:** a test is only as good as its inputs. Mine were realistic-looking
+and not real, which is a distinction that hides a filter doing nothing.
+
+### The corpus stored nothing
+
+First build: **0 recipes kept, 32 dropped.**
+
+The rule was that every ingredient must be priceable, so nothing partly-guessed
+could be published. Sound in principle, impossible in practice — every real
+recipe contains a gram of asafoetida or a curry leaf that USDA has never heard
+of.
+
+Now: unknowns under 30g are skipped, anything larger still rejects the recipe,
+and it's rejected anyway once 15% of the total weight is unaccounted for. The
+principle survives; the absolutism didn't.
+
+### And a key in an error message — `29f7221`
+
+Diagnosing the above, a USDA failure printed the whole web address of the
+request — **including the API key** — because that is what the HTTP library
+puts in its error messages. It would have landed in any server log the same
+way. The key was rotated and the message is now stripped before it can be
+raised, with a test that fails if it ever returns.
+
+The same investigation found USDA returning **404 on 13 of 20 identical
+requests**. Nothing crashed — the code already treats a failed lookup as "fall
+back to the AI's estimate" — so two thirds of foods were quietly losing their
+database grounding with no visible sign. Three attempts with a short pause took
+a live sample from 35% to 90%.
+
+## Your own food library — `069d78d`
+
+**Added:** `api/foods.py`, `api/barcode.py`, `0007_saved_foods.sql`, and a
+`/foods` page. **Running total: 186.**
+
+The answer to a limitation flagged since Week 3. USDA has no **poha**, so it
+matched a groundcherry that shares the word, and there was no fix beyond
+"you'll see it's wrong and can edit it". Now you define it once and it is right
+permanently — the pipeline checks your library *before* USDA and labels the
+item "your saved poha" so the source is visible.
+
+Proved end to end:
+
+```
+USDA alone         : poha -> Groundcherries (cape-gooseberries or poha), raw
+without a library  : 280 kcal  (Dirty rice)
+with your library  : 338 kcal  (your saved Poha)
+```
+
+Barcode lookup uses **Open Food Facts** — free, no key, purpose-built for
+this. A scan produces a *candidate for review*, never a saved food and never a
+log entry, for the same reason voice input fills a box instead of submitting: a
+misread digit should be caught by a person. Products with no calorie data are
+rejected rather than saved as zero, which would silently under-count every meal
+they appeared in.
+
+## Scanning everywhere, and reading labels — `a15a95e`, `f4c2e11`
+
+Browsers disagree about barcodes: Android Chrome has a built-in detector,
+desktop Chromium and Safari do not. Rather than rewrite around a scanning
+library, the project adds a **polyfill of the same standard interface** backed
+by ZXing compiled to WebAssembly — so the existing code was unchanged and the
+whole diff was one import. Verified by generating real barcodes in a browser
+and reading them back.
+
+Open Food Facts still misses plenty — regional brands, own-labels. So for those
+you **photograph the nutrition panel** and the model reads the numbers off it.
+
+That sounds like it breaks the rule about the AI never supplying nutrition
+figures. It doesn't: the AI is doing what it does everywhere here — reading an
+image. The numbers are printed on a real label, it transcribes them, and you
+check them before saving. The prompt says explicitly to return nothing rather
+than fill in what a product usually contains.
+
+The part that needed care is **which basis the panel uses**. Labels state
+figures per 100g or per serving, and treating one as the other misstates the
+food by however far the serving differs. The model reports which it read,
+per-serving figures are converted, and a per-serving label with no printed
+serving weight is refused rather than guessed at.
+
+---
+
 # Every bug, and what it taught
 
 In order. The striking pattern: **almost none would have been caught by the
@@ -980,6 +1106,12 @@ computer checking the code for obvious errors, and several passed the tests.**
 | 16 | Every page slow by 1.5 seconds | Security machinery rebuilt per request | Timing each step, after two wrong guesses |
 | 17 | **Target could move 1050 cal/week** | Limit written per-event instead of per-week | Simulating four weeks |
 | 18 | Meal matching had a 0.0015 margin | Compared the AI's prose summaries, which all share the same boilerplate | Checking a suspiciously perfect 1.0000 score |
+| 19 | **The allergy filter matched nothing at all** | The form saved "Seafood", recipes saved "seafood", compared as exact text | Reading the build output |
+| 20 | Allergens stored in two spellings at once | The AI's capitalisation and the code's were both kept | Same output |
+| 21 | A tofu dish was flagged as beef | "mince" matched "minced garlic" | Same output |
+| 22 | The recipe corpus saved **nothing at all** | Demanding every ingredient be priceable, when real recipes contain asafoetida | 0 of 32 recipes kept |
+| 23 | The USDA key was printed in an error | `requests` puts the whole web address, key included, into the message | An unrelated failure |
+| 24 | Two thirds of food lookups silently degraded | USDA returned 404 on 13 of 20 identical requests, and nothing retried | Investigating something else |
 
 ### The four themes
 
@@ -1031,9 +1163,9 @@ it goes green is how a real bug gets certified as correct behaviour.
 | | |
 |---|---|
 | Phase | 3 of 5 |
-| Tests | **131**, all offline, ~4 seconds |
+| Tests | **195**, all offline, ~8 seconds |
 | API endpoints | 14 |
-| Database tables | 9, every one with Row Level Security |
+| Database tables | 11 (10 user-scoped with Row Level Security, plus the shared recipe corpus) |
 | Deployed | **No** — runs on one laptop |
 
 **Works:** signup and login · onboarding with personalised targets ·
@@ -1042,7 +1174,7 @@ about hidden cooking oil · full editing before saving · a dashboard of today
 against target · a Coach that answers from real logged data · adaptive targets
 learned from your own weigh-ins.
 
-**Not built yet:** the recipe corpus · the Foodie assistant · an accuracy
+**Not built yet:** an accuracy
 evaluation suite · deployment.
 
 ### Known limitations, stated plainly
