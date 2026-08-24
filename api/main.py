@@ -6,7 +6,7 @@ load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routes import analyze, chat, meals, profile, weights
+from routes import analyze, chat, foods, meals, profile, weights
 
 app = FastAPI(title="TruPlate AI API")
 
@@ -29,3 +29,4 @@ app.include_router(analyze.router)
 app.include_router(meals.router)
 app.include_router(chat.router)
 app.include_router(weights.router)
+app.include_router(foods.router)

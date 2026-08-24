@@ -10,6 +10,7 @@ import requests
 from pydantic import BaseModel
 
 import usda
+from foods import SavedFood, macros_for_portion, match_saved_food
 from vision import VisionAnalysis
 
 # Canonical clarifying-answer options. The LLM decides WHETHER to ask and which
@@ -90,12 +91,39 @@ def _priced_from_usda(
 
 
 def resolve_items(
-    analysis: VisionAnalysis, *, search: Search = usda.search_food
+    analysis: VisionAnalysis,
+    *,
+    search: Search = usda.search_food,
+    library: list[SavedFood] | None = None,
 ) -> list[ResolvedItem]:
-    """Price every identified item, preferring USDA and falling back to the LLM."""
+    """Price every identified item.
+
+    Order of preference: the user's own saved foods, then USDA, then the
+    model's estimate. The library comes first because it exists precisely
+    where USDA is wrong -- it has no "poha" and returns a groundcherry entry
+    sharing the word, and a user who has corrected that once should never see
+    it again.
+    """
     resolved = []
+    library = library or []
 
     for item in analysis.items:
+        mine = match_saved_food(item.name, item.usda_query, library)
+        if mine is not None:
+            resolved.append(ResolvedItem(
+                name=item.name,
+                usda_query=item.usda_query,
+                grams=item.portion.grams,
+                count=item.portion.count,
+                unit=item.portion.unit,
+                confidence=1.0,  # they defined it; there's nothing to be unsure about
+                source="user",
+                usda_fdc_id=None,
+                usda_description=f"your saved {mine.name}",
+                **macros_for_portion(mine, item.portion.grams),
+            ))
+            continue
+
         # The model's own estimate for this portion, per 100g, is the sanity
         # check that stops "banana" matching dehydrated banana powder.
         expected = (

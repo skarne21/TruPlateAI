@@ -14,6 +14,7 @@ from analysis import (
     totals_for,
 )
 from deps import get_current_user_client
+from foods import load_library
 from memory import embed_meal, find_similar_meal, meal_signature, recent_meal_summaries
 from routes.profile import load_profile_row
 from transcribe import frequent_foods, transcribe_audio
@@ -130,7 +131,8 @@ async def analyze(
         # a failed analysis must never silently drop a meal.
         raise HTTPException(502, f"Couldn't read that meal: {e}")
 
-    items = resolve_items(analysis)
+    # The user's own foods beat USDA -- this is what makes a correction stick.
+    items = resolve_items(analysis, library=load_library(client, user_id))
     return AnalyzeResult(
         meal_summary=analysis.meal_summary,
         input_mode=input_mode,

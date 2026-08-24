@@ -21,6 +21,7 @@ const NAV_ITEMS = [
   { label: "Coach", href: "/coach" },
   { label: "Foodie", href: "/foodie" },
   { label: "Weigh-in", href: "/weight" },
+  { label: "My foods", href: "/foods" },
 ];
 
 function localDate(): string {

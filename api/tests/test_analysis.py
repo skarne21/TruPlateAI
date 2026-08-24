@@ -201,3 +201,51 @@ def test_portion_answer_leaves_other_items_untouched():
     sambar_before = resolved[1].kcal
     updated = apply_portion_answer(resolved, item_name="idli", option_index=0)
     assert updated[1].kcal == pytest.approx(sambar_before)
+
+
+# --- a user's own foods beat USDA ------------------------------------------
+
+from foods import SavedFood  # noqa: E402
+
+
+def my_poha() -> SavedFood:
+    return SavedFood(
+        id="food-1", name="Poha", kcal_per_100g=130.0, protein_per_100g=2.5,
+        carbs_per_100g=27.0, fat_per_100g=1.5, serving_grams=250.0, source="manual",
+    )
+
+
+def test_a_saved_food_is_used_instead_of_usda():
+    # The poha fix. USDA has no poha and returns a groundcherry entry sharing
+    # the word; the user's own definition must win outright.
+    resolved = resolve_items(
+        analysis_with([vision_item(name="Poha", usda_query="poha flattened rice", grams=200)]),
+        search=fake_search,
+        library=[my_poha()],
+    )
+    assert resolved[0].source == "user"
+    assert resolved[0].kcal == pytest.approx(130 * 2)
+    assert "Groundcherries" not in (resolved[0].usda_description or "")
+
+
+def test_the_saved_food_is_named_as_the_source():
+    resolved = resolve_items(
+        analysis_with([vision_item(name="Poha", usda_query="poha", grams=100)]),
+        search=fake_search, library=[my_poha()],
+    )
+    # The UI shows this, so it has to say where the numbers came from.
+    assert "saved" in (resolved[0].usda_description or "").lower()
+
+
+def test_foods_not_in_the_library_still_use_usda():
+    resolved = resolve_items(
+        analysis_with([vision_item()]), search=fake_search, library=[my_poha()]
+    )
+    assert resolved[0].source == "usda"
+    assert resolved[0].usda_description == "Idli"
+
+
+def test_no_library_behaves_exactly_as_before():
+    with_none = resolve_items(analysis_with([vision_item()]), search=fake_search, library=[])
+    without = resolve_items(analysis_with([vision_item()]), search=fake_search)
+    assert with_none[0].kcal == without[0].kcal
