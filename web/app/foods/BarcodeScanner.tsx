@@ -1,23 +1,20 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 
-// Native barcode detection. Present on Android Chrome -- the phone-in-a-kitchen
-// case this is for -- and absent on desktop Chromium and Safari, so typing the
-// number stays a first-class path rather than a consolation prize.
-type DetectedBarcode = { rawValue: string };
-type DetectorLike = { detect(source: HTMLVideoElement): Promise<DetectedBarcode[]> };
+// The browser's own BarcodeDetector exists on Android Chrome and nowhere else
+// that matters -- not desktop Chromium, not Safari. This polyfill implements
+// the same standard API on top of ZXing compiled to WebAssembly, so the code
+// below is unchanged and scanning now works everywhere.
+//
+// Chosen over calling a scanning library directly precisely because it needs
+// no rewrite: if browsers ever ship the real thing widely, deleting this
+// import is the whole migration.
+import { BarcodeDetector } from "barcode-detector/ponyfill";
 
-declare global {
-  interface Window {
-    BarcodeDetector?: {
-      new (options?: { formats?: string[] }): DetectorLike;
-      getSupportedFormats(): Promise<string[]>;
-    };
-  }
-}
-
-const FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e"];
+// Retail food formats only. Narrowing what it looks for makes each frame
+// cheaper and stops a QR code on the packaging being read as the product.
+const FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e"] as const;
 const POLL_MS = 400;
 
 export default function BarcodeScanner({
@@ -33,17 +30,6 @@ export default function BarcodeScanner({
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
 
-  // Whether the browser can detect barcodes is a fact about the environment,
-  // not state. Reading it during render would break server rendering (there is
-  // no `window`), and setting it from an effect costs a second render -- so it
-  // is read through useSyncExternalStore, which has a server answer built in.
-  // The subscribe function is a no-op because the capability never changes.
-  const canScan = useSyncExternalStore(
-    () => () => {},
-    () => "BarcodeDetector" in window,
-    () => false,
-  );
-
   const stop = () => {
     stream.current?.getTracks().forEach((track) => track.stop());
     stream.current = null;
@@ -56,8 +42,6 @@ export default function BarcodeScanner({
 
   async function start() {
     setError(null);
-    if (!window.BarcodeDetector) return;
-
     try {
       stream.current = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment" },
@@ -73,7 +57,7 @@ export default function BarcodeScanner({
       await video.current.play().catch(() => {});
     }
 
-    const detector = new window.BarcodeDetector({ formats: FORMATS });
+    const detector = new BarcodeDetector({ formats: [...FORMATS] });
     const tick = async () => {
       if (!stream.current || !video.current) return;
       try {
@@ -95,9 +79,7 @@ export default function BarcodeScanner({
     <div className="border border-border bg-surface p-4">
       <p className="mb-1 text-sm font-bold text-ink">Scan a barcode</p>
       <p className="mb-3 text-xs text-ink-dim">
-        {canScan
-          ? "Point the camera at the package, or type the number under it."
-          : "This browser can't use the camera for barcodes — type the number under the barcode."}
+        Point the camera at the package, or type the number underneath it.
       </p>
 
       {scanning && (
@@ -113,7 +95,7 @@ export default function BarcodeScanner({
         </div>
       )}
 
-      {canScan && !scanning && (
+      {!scanning && (
         <button
           type="button"
           onClick={start}
