@@ -1,0 +1,23 @@
+# What must never reach the image.
+#
+# The critical line is .env: `COPY . .` would otherwise bake real API keys into
+# an image layer, where they survive even if a later step deletes the file, and
+# anyone who can pull the image can read them.
+.env
+.env.*
+!.env.example
+
+# The local virtualenv holds Windows executables that are useless in a Linux
+# container, and it is large enough to slow every build if sent along.
+.venv/
+
+# Not needed to serve requests. Tests run in CI, and the scripts are run by
+# hand against the live database, not from inside the deployed container.
+tests/
+scripts/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

@@ -72,10 +72,26 @@ def _user_id_from_token(token: str, client: Client) -> str:
     return user_response.user.id
 
 
-def get_current_user_client(authorization: str = Header(...)) -> tuple[str, Client]:
-    if not authorization.startswith("Bearer "):
+def get_current_user_client(
+    authorization: str | None = Header(None),
+) -> tuple[str, Client]:
+    # Header(None) rather than Header(...): a required header makes the
+    # framework reject a missing one as a 422 validation error, which tells
+    # a caller its request was malformed when the truth is that it needs to
+    # log in. With a default, the 401 below is reachable.
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing bearer token")
     token = authorization.removeprefix("Bearer ")
 
     client = _client_for_token(token)
     return _user_id_from_token(token, client), client
+
+
+@lru_cache(maxsize=1)
+def anon_client() -> Client:
+    """An unauthenticated client, used only by the keep-alive ping.
+
+    Cached for the same reason as the per-token clients above: constructing one
+    costs ~900ms, nearly all of it httpx building an SSL context.
+    """
+    return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)

@@ -5,9 +5,10 @@ from dotenv import load_dotenv
 # Must run before importing anything that reads env vars at import time (deps.py).
 load_dotenv()
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+import deps
 from routes import analyze, chat, foods, meals, profile, weights
 
 # Which front-end origins may call this API. Comma-separated so a deployed
@@ -48,3 +49,28 @@ app.include_router(meals.router)
 app.include_router(chat.router)
 app.include_router(weights.router)
 app.include_router(foods.router)
+
+
+@app.get("/health/db")
+def health_db():
+    """A ping that actually reaches Postgres.
+
+    Supabase pauses a free project after roughly a week without database
+    activity. `/health` above answers without querying anything, so a keep-alive
+    aimed at it would hold this API warm while the database slept underneath --
+    the app would be dead with every check still passing green.
+
+    Reads from the shared recipe corpus, which holds no user data. Row Level
+    Security means an unauthenticated caller gets an empty list back, and that
+    is fine: the point is to prove the round trip happened, not to read
+    anything.
+
+    Called through the module rather than an imported name so a test can
+    substitute it -- importing a function copies it, and faking the original
+    then leaves the copy running (a mistake this project has already made).
+    """
+    try:
+        deps.anon_client().table("recipes").select("id").limit(1).execute()
+    except Exception:
+        raise HTTPException(503, "Database unreachable")
+    return {"ok": True, "db": True}
