@@ -956,7 +956,7 @@ reading an image as "dosa" and as "crepe".
 
 ---
 
-# Week 7 — Suggestions, and your own foods (11–24 August)
+# Week 7 — Suggestions, your own foods, and daily use (11–25 August)
 
 ## Foodie, and a recipe corpus — `153bf80`
 
@@ -1081,6 +1081,82 @@ serving weight is refused rather than guessed at.
 
 ---
 
+## The gaps that only show up when you use it yourself — `e05edb0`
+
+Every feature in the plan was built, and the app still wasn't usable every
+day. The reason is a kind of gap no feature list contains: there was no way
+to **look at what you had already logged**.
+
+Three things were missing, each obvious the moment you try to live with it:
+
+- **History.** Meals went into the database and vanished from view. If the AI
+  guessed a curry 200 calories high, you could neither see it nor remove it —
+  so one bad estimate poisoned the day's total permanently.
+- **Settings.** Everything picked at signup — goal, pace, allergies — was
+  frozen. An allergy list you cannot edit is worse than no list, because you
+  trust it.
+- **Installability.** It was a website you reached by typing an address.
+  Logging a meal has to be *faster than not logging it*, or you stop doing it.
+
+The settings screen deliberately **imports the option lists from the
+onboarding screen** instead of restating them. Two copies of an allergy list
+drift apart, and the drift would be silent: an allergy offered at signup but
+missing from settings is a safety gap wearing the costume of a typo.
+
+The history screen shows, for every item, its weight and **where the number
+came from** — the matched database entry by name, or "AI estimate". That is
+what makes a logged meal checkable against a weighed one, which is the whole
+point of Phase 4.
+
+### The loading state that shouldn't be a state
+
+The obvious way to write a screen that fetches data is three variables:
+`loading`, `error`, and the data. The linter rejected it, for a reason worth
+keeping: those three can disagree with each other. Nothing stops the code
+from leaving `loading` switched on after the data has already arrived.
+
+Instead the screen keeps **one** value — what was loaded, and which time range
+it was loaded for — and works the rest out from it:
+
+```
+const status = loaded?.days !== days ? "loading"
+             : loaded.meals === null ? "error"
+             : "ready";
+```
+
+Ask for 30 days and the range no longer matches what is loaded, so it reads
+as "loading" instantly, with nothing to remember to set and nothing to forget
+to unset. Impossible states stop being handled and start being impossible to
+write down.
+
+## Six advisories, found before deploying rather than after — `9bd9faa`
+
+`npm audit` — a command that checks every installed library against a public
+list of known security flaws — reported six high-severity findings. None were
+in code written for this project. All six were in libraries that the
+project's libraries themselves depend on.
+
+Three were fixable immediately. The other three needed **Next itself** moved
+from 16.2.11 to 16.3.2, because they arrive through it.
+
+One of the three genuinely mattered. `sharp` is the image processor Next uses,
+and it carried four flaws inherited from the C library underneath it. In this
+app `sharp` would be handling **photographs uploaded by users** — exactly the
+untrusted input those flaws concern. The other two were build-time only:
+real, but not reachable by anyone using the deployed app.
+
+The upgrade named the version directly rather than letting the tool pick,
+so the change stayed one deliberate minor version bump instead of whatever
+else it might have dragged along. Then everything was re-checked: 202 tests,
+types, linting, a full production build, and the browser run of logging, then
+history, then delete. Zero advisories remain.
+
+Worth stating plainly, because it is the useful lesson: this class of problem
+is invisible to every other check in the project. The tests pass. The types
+check. The app works. A dependency audit is the only thing that looks.
+
+---
+
 # Every bug, and what it taught
 
 In order. The striking pattern: **almost none would have been caught by the
@@ -1112,6 +1188,7 @@ computer checking the code for obvious errors, and several passed the tests.**
 | 22 | The recipe corpus saved **nothing at all** | Demanding every ingredient be priceable, when real recipes contain asafoetida | 0 of 32 recipes kept |
 | 23 | The USDA key was printed in an error | `requests` puts the whole web address, key included, into the message | An unrelated failure |
 | 24 | Two thirds of food lookups silently degraded | USDA returned 404 on 13 of 20 identical requests, and nothing retried | Investigating something else |
+| 25 | Six known security flaws in installed libraries | Inherited through other libraries; one sat in the image processor that would handle uploaded photos | A routine audit run before deploying |
 
 ### The four themes
 
@@ -1124,11 +1201,11 @@ computer checking the code for obvious errors, and several passed the tests.**
 4. **Measure before you fix.** #16 took three attempts, two of which were
    confident and wrong.
 
-### Three times the test was wrong and the code was right
+### Five times the test was wrong and the code was right
 
 Worth separating out, because it's the opposite of what people expect tests to
 do. A failing test means *something* disagrees — it does **not** tell you which
-side is mistaken. Three times here, the code was fine and my check was faulty.
+side is mistaken. Five times here, the code was fine and my check was faulty.
 
 **Week 1 — bad arithmetic in the expected answer.** I asserted a calorie target
 calculated from resting metabolism, when it should have been resting metabolism
@@ -1152,6 +1229,26 @@ came out *above* the formula's estimate. The target should rise. *Caught
 because the code disagreed with me and turned out to have the better grasp of
 the physics.*
 
+**Week 7 — a check hunting for a word the screen never shows.** The browser
+check for the history screen searched the page for the word "USDA". It wasn't
+there — because the screen shows the **matched entry's name**, "Sambar,
+vegetable stew", which is the thing you can actually hold up against a plate.
+The check was demanding the label; the screen was showing the evidence.
+*Caught by reading what the page actually rendered instead of believing the
+assertion.*
+
+**Week 7 — one byte in the wrong encoding.** A check looked for the separator
+between an item's weight and its source — `240g · Sambar, vegetable stew`. It
+failed, and the app was perfectly fine. That `·` had been written into the
+check file as a **single raw byte**, the way older Western encodings store it,
+while the file is read as UTF-8, where the same character takes two bytes.
+Read as UTF-8, a lone such byte is not a valid character at all, so it quietly
+became the "unknown character" symbol — and a search for *unknown character*
+never matches a real `·`. *Caught because a neighbouring check passed that
+could only pass if the section had expanded properly, which meant the failing
+check had to be the thing at fault.* Fixed by writing the character as an
+escape sequence, which is plain ASCII and cannot be re-encoded by accident.
+
 **What to take from it:** when a test fails, the first question is "which of
 these two is wrong?" — not "how do I make this pass?". Changing the test until
 it goes green is how a real bug gets certified as correct behaviour.
@@ -1162,20 +1259,25 @@ it goes green is how a real bug gets certified as correct behaviour.
 
 | | |
 |---|---|
-| Phase | 3 of 5 |
-| Tests | **195**, all offline, ~8 seconds |
-| API endpoints | 14 |
+| Phase | 3 of 5 done — Phase 4 (accuracy evaluation, deployment) is next |
+| Tests | **202**, all offline, ~9 seconds |
+| API endpoints | 21 |
 | Database tables | 11 (10 user-scoped with Row Level Security, plus the shared recipe corpus) |
 | Deployed | **No** — runs on one laptop |
+| Known security advisories | **0** |
 
 **Works:** signup and login · onboarding with personalised targets ·
 photo/text/voice meal logging with USDA-grounded numbers · bounded questions
 about hidden cooking oil · full editing before saving · a dashboard of today
 against target · a Coach that answers from real logged data · adaptive targets
-learned from your own weigh-ins.
+learned from your own weigh-ins · a Foodie that suggests recipes filtered
+against your allergies in code · your own saved foods, barcode scanning and
+label photographs · history you can review and correct · editable settings ·
+installable on a phone home screen.
 
-**Not built yet:** an accuracy
-evaluation suite · deployment.
+**Not built yet:** an accuracy evaluation suite · deployment · restaurant
+search for the Foodie, which needs a paid map service this project has no
+key for.
 
 ### Known limitations, stated plainly
 
