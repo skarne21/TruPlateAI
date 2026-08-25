@@ -14,6 +14,7 @@ interview.
 | Google Cloud project | `gen-lang-client-0297556778` ("TruPlate") |
 | Region | `us-central1` |
 | Front end | not yet deployed |
+| Keep-alive | `truplate-keepalive`, every 3 days at 09:00 UTC |
 
 Measured against the live service after deploying:
 
@@ -25,6 +26,7 @@ Measured against the live service after deploying:
 | Request with a bad token | **401** |
 | Preflight from the configured origin | allowed |
 | Preflight from `https://evil.example.com` | **refused** |
+| Scheduler -> `/health/db` (forced run) | **200**, confirmed in the logs |
 
 The last two are the ones worth checking after any deploy: they prove the
 origin allowlist is not merely configured but actually discriminating.
@@ -252,6 +254,23 @@ one row from the shared recipe corpus: no user data, nothing to leak, and it
 proves the round trip happened. Three tests hold it in place, including one
 asserting that plain `/health` does **not** touch the database — so the two can
 never quietly converge back into the same thing.
+
+### Enabling a service is not instant
+
+Worth knowing, because it looks exactly like a bug. The scheduler job was
+created immediately after switching the Cloud Scheduler API on. It reported
+success, showed as `ENABLED`, had the right URL and schedule -- and did
+nothing. Forced runs returned exit code 0 while no request ever arrived, and
+the job had no `lastAttemptTime` at all.
+
+Nothing was wrong with it. Enabling a Google Cloud service takes a few minutes
+to propagate, and until it has, the job accepts commands and silently drops
+them. The same forced run a few minutes later worked, and the logs then showed
+both attempts arriving at once.
+
+The habit that catches this: **verify a scheduled job by forcing a run and
+reading the logs**, rather than trusting that creating it worked. A job that
+was created is not a job that fires.
 
 **Interview line:** *"The subtlety is that the thing you're keeping alive has
 to be the thing that sleeps. My first instinct was to ping the health endpoint,
