@@ -12,8 +12,9 @@ export type ResolvedItem = Macros & {
   count: number;
   unit: string;
   confidence: number;
-  /** usda = real database numbers, llm = the model's estimate, user = added by hand. */
-  source: "usda" | "llm" | "user";
+  /** Where the numbers came from, best first: barcode = printed on the packet,
+   *  usda = real database numbers, user = your own saved food, llm = estimated. */
+  source: "usda" | "llm" | "user" | "barcode";
   usda_fdc_id: number | null;
   usda_description: string | null;
 };
@@ -70,4 +71,15 @@ export const LOW_CONFIDENCE = 0.7;
 
 export function round(value: number | null): number {
   return Math.round(value ?? 0);
+}
+
+/** Sum a meal's items. The server re-sums these on /log, so this only keeps the
+ *  screen honest while you are still editing. */
+export function sumTotals(items: ResolvedItem[]): Totals {
+  return {
+    kcal: items.reduce((sum, i) => sum + (i.kcal ?? 0), 0),
+    protein_g: items.reduce((sum, i) => sum + (i.protein_g ?? 0), 0),
+    carbs_g: items.reduce((sum, i) => sum + (i.carbs_g ?? 0), 0),
+    fat_g: items.reduce((sum, i) => sum + (i.fat_g ?? 0), 0),
+  };
 }

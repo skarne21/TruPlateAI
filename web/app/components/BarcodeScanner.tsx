@@ -75,6 +75,19 @@ export default function BarcodeScanner({
     setTimeout(tick, POLL_MS);
   }
 
+  /** Dispatch a typed code exactly once.
+   *
+   * The field is cleared first: leaving the code in place meant Enter and then
+   * the button -- or one impatient double-click -- added the same product
+   * twice, silently doubling the calories with nothing on screen to explain it.
+   */
+  function submitTyped() {
+    const code = typed.trim();
+    if (!code) return;
+    setTyped("");
+    onDetected(code);
+  }
+
   return (
     <div className="border border-border bg-surface p-4">
       <p className="mb-1 text-sm font-bold text-ink">Scan a barcode</p>
@@ -113,7 +126,7 @@ export default function BarcodeScanner({
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              if (typed.trim()) onDetected(typed.trim());
+              submitTyped();
             }
           }}
           inputMode="numeric"
@@ -123,7 +136,7 @@ export default function BarcodeScanner({
         <button
           type="button"
           disabled={busy || !typed.trim()}
-          onClick={() => onDetected(typed.trim())}
+          onClick={submitTyped}
           className="border border-accent bg-accent px-3.5 py-2 text-sm font-bold text-[#1a1006] disabled:opacity-40"
         >
           {busy ? "..." : "Look up"}

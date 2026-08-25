@@ -6,7 +6,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { downscaleImage } from "@/lib/image";
 import { createClient } from "@/lib/supabase/client";
-import BarcodeScanner from "./BarcodeScanner";
+import BarcodeScanner from "../components/BarcodeScanner";
 import {
   draftFromProduct,
   emptyDraft,

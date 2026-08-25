@@ -6,14 +6,52 @@ import Link from "next/link";
 import { apiFetch, uploadMealPhoto } from "@/lib/api";
 import { downscaleImage } from "@/lib/image";
 import { createClient } from "@/lib/supabase/client";
+import BarcodeScanner from "../components/BarcodeScanner";
+import type { BarcodeProduct } from "../foods/types";
 import ReviewStep from "./ReviewStep";
 import VoiceButton from "./VoiceButton";
-import type { AnalyzeResult, ResolvedItem, Totals } from "./types";
+import { sumTotals, type AnalyzeResult, type ResolvedItem, type Totals } from "./types";
 
 type Photo = { blob: Blob; previewUrl: string };
 
 // Matches MAX_IMAGES in api/routes/analyze.py.
 const MAX_PHOTOS = 5;
+
+// Nutrition labels are stated per 100g, so that is the honest starting
+// portion: it is the number actually printed, before anyone estimates.
+const DEFAULT_SCAN_GRAMS = 100;
+
+/** Turn a scanned product into a meal item at the given weight.
+ *
+ * Confidence is 1: these macros are printed on the packet rather than
+ * identified from a photo, so there is nothing to be unsure about except
+ * the weight, which the user sets.
+ */
+function itemFromProduct(product: BarcodeProduct, grams: number): ResolvedItem {
+  const factor = grams / 100;
+  // Open Food Facts often repeats the brand inside the product name, so
+  // concatenating blindly gives "Coca-Cola Coca-Cola".
+  const brand = product.brand?.trim();
+  const label =
+    brand && !product.name.toLowerCase().includes(brand.toLowerCase())
+      ? `${brand} ${product.name}`
+      : product.name;
+  return {
+    name: label,
+    usda_query: product.name,
+    grams,
+    count: 1,
+    unit: "g",
+    confidence: 1,
+    source: "barcode",
+    usda_fdc_id: null,
+    usda_description: label,
+    kcal: product.kcal_per_100g * factor,
+    protein_g: product.protein_per_100g * factor,
+    carbs_g: product.carbs_per_100g * factor,
+    fat_g: product.fat_per_100g * factor,
+  };
+}
 
 export default function LogPage() {
   const router = useRouter();
@@ -22,6 +60,9 @@ export default function LogPage() {
   const [result, setResult] = useState<AnalyzeResult | null>(null);
   const [items, setItems] = useState<ResolvedItem[]>([]);
   const [totals, setTotals] = useState<Totals>({ kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0 });
+  const [scanned, setScanned] = useState<ResolvedItem[]>([]);
+  const [scanning, setScanning] = useState(false);
+  const [scanNote, setScanNote] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,10 +109,68 @@ export default function LogPage() {
     });
   }
 
+  async function scanBarcode(code: string) {
+    setError(null);
+    setScanNote(null);
+    try {
+      const res = await apiFetch(`/barcode/${encodeURIComponent(code)}`);
+      if (res.status === 404) {
+        // Not worth blocking the meal over: describe it in the note instead
+        // and the normal pipeline still gets a shot at it.
+        setScanNote("That barcode isn't in the database. Add it in My foods, or just describe it below.");
+        return;
+      }
+      if (!res.ok) throw new Error("Couldn't look that barcode up. Try again.");
+      const product: BarcodeProduct = await res.json();
+      setScanned((prev) => [...prev, itemFromProduct(product, DEFAULT_SCAN_GRAMS)]);
+      setScanning(false);
+      setScanNote(`Added ${product.name} — set the weight you actually ate.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't look that barcode up");
+    }
+  }
+
+  /** Rescale a scanned item, which is exact because label macros are linear. */
+  function setScannedGrams(index: number, grams: number) {
+    setScanned((prev) =>
+      prev.map((item, i) => {
+        if (i !== index) return item;
+        const factor = item.grams > 0 ? grams / item.grams : 0;
+        return {
+          ...item,
+          grams,
+          kcal: (item.kcal ?? 0) * factor,
+          protein_g: (item.protein_g ?? 0) * factor,
+          carbs_g: (item.carbs_g ?? 0) * factor,
+          fat_g: (item.fat_g ?? 0) * factor,
+        };
+      })
+    );
+  }
+
   async function analyze() {
     setAnalyzing(true);
     setError(null);
     try {
+      // Nothing but scanned packets: the numbers are already exact, so
+      // there is nothing for the model to identify. Skipping the call saves
+      // a few seconds and an API charge on the one input that needs neither.
+      if (photos.length === 0 && !caption.trim()) {
+        setResult({
+          meal_summary: scanned.map((i) => i.name).join(", "),
+          input_mode: "barcode",
+          items: scanned,
+          questions: [],
+          totals: sumTotals(scanned),
+          warnings: [],
+          analysis_json: { source: "barcode", items: scanned.map((i) => i.name) },
+          similar_meal: null,
+        });
+        setItems(scanned);
+        setTotals(sumTotals(scanned));
+        return;
+      }
+
       const form = new FormData();
       photos.forEach((photo, i) => form.append("images", photo.blob, `meal-${i}.jpg`));
       if (caption.trim()) form.append("caption", caption.trim());
@@ -81,9 +180,12 @@ export default function LogPage() {
       if (!res.ok) throw new Error("We couldn't read that meal. Your photo and note are still here — try again.");
 
       const data: AnalyzeResult = await res.json();
+      // Scanned packets are appended rather than sent to be identified --
+      // a label beats anything the model could infer about the same food.
+      const merged = [...data.items, ...scanned];
       setResult(data);
-      setItems(data.items);
-      setTotals(data.totals);
+      setItems(merged);
+      setTotals(sumTotals(merged));
     } catch (e) {
       // The draft is deliberately left intact: a failed analysis must never
       // silently drop a meal.
@@ -214,15 +316,70 @@ export default function LogPage() {
                 />
               </div>
 
+              <div className="mt-4 border-t border-border pt-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-ink-dim">
+                    Packaged food? Scan it for exact numbers.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setScanning((on) => !on)}
+                    className="text-xs font-bold text-accent underline underline-offset-2"
+                  >
+                    {scanning ? "Close" : "Scan barcode"}
+                  </button>
+                </div>
+
+                {scanning && <BarcodeScanner onDetected={scanBarcode} busy={analyzing} />}
+
+                {scanNote && <p className="mt-2 text-xs text-ink-dim">{scanNote}</p>}
+
+                {scanned.map((item, index) => (
+                  <div
+                    key={`${item.name}-${index}`}
+                    className="mt-2 flex items-center gap-2 border border-border bg-surface p-2.5"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <b className="block truncate text-xs font-bold text-ink">{item.name}</b>
+                      <small className="text-[0.68rem] text-ink-dim tabular-nums">
+                        {Math.round(item.kcal ?? 0)} kcal · from the label
+                      </small>
+                    </div>
+                    <input
+                      type="number"
+                      value={Math.round(item.grams)}
+                      onChange={(e) => setScannedGrams(index, Number(e.target.value) || 0)}
+                      aria-label={`Grams of ${item.name}`}
+                      className="w-20 border border-border bg-surface p-2 text-xs text-ink tabular-nums"
+                    />
+                    <span className="text-xs text-ink-dim">g</span>
+                    <button
+                      type="button"
+                      onClick={() => setScanned((prev) => prev.filter((_, i) => i !== index))}
+                      aria-label={`Remove ${item.name}`}
+                      className="px-1 text-sm font-extrabold text-ink-dim"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+
               {error && <p className="mt-3 text-sm font-semibold text-warn">{error}</p>}
 
               <button
                 type="button"
                 onClick={analyze}
-                disabled={analyzing || (photos.length === 0 && !caption.trim())}
+                disabled={
+                  analyzing || (photos.length === 0 && !caption.trim() && scanned.length === 0)
+                }
                 className="mt-4 w-full bg-linear-to-br from-accent to-accent-2 px-4 py-3 text-sm font-extrabold text-[#1a1006] disabled:opacity-40"
               >
-                {analyzing ? "Reading your meal..." : "Analyze"}
+                {analyzing
+                  ? "Reading your meal..."
+                  : photos.length === 0 && !caption.trim()
+                    ? "Review scanned items"
+                    : "Analyze"}
               </button>
             </>
           )}

@@ -57,7 +57,7 @@ class ResolvedItem(BaseModel):
     count: float
     unit: str
     confidence: float
-    source: str  # usda | llm | user
+    source: str  # usda | llm | user | barcode
     usda_fdc_id: int | None = None
     usda_description: str | None = None
     kcal: float | None = None

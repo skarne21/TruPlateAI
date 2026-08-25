@@ -7,6 +7,7 @@ import AddItem from "./AddItem";
 import {
   LOW_CONFIDENCE,
   round,
+  sumTotals,
   type AnalyzeResult,
   type FatAnswer,
   type Question,
@@ -123,12 +124,7 @@ export default function ReviewStep({
   }
 
   function replace(next: ResolvedItem[]) {
-    onChange(next, {
-      kcal: next.reduce((sum, i) => sum + (i.kcal ?? 0), 0),
-      protein_g: next.reduce((sum, i) => sum + (i.protein_g ?? 0), 0),
-      carbs_g: next.reduce((sum, i) => sum + (i.carbs_g ?? 0), 0),
-      fat_g: next.reduce((sum, i) => sum + (i.fat_g ?? 0), 0),
-    });
+    onChange(next, sumTotals(next));
   }
 
   const openQuestions = result.questions.filter((q) => !answered.has(q.id));
@@ -313,11 +309,13 @@ function ItemRow({
               match -- USDA has no "poha", so it returns a groundcherry entry that
               shares the word, and only a visible description makes that obvious. */}
           <small className="block truncate text-xs text-ink-dim">
-            {item.source === "usda"
-              ? item.usda_description
-              : item.source === "user"
-                ? "added by you"
-                : "AI estimate — no database match"}
+            {item.source === "barcode"
+              ? "from the label · scanned"
+              : item.source === "usda"
+                ? item.usda_description
+                : item.source === "user"
+                  ? "added by you"
+                  : "AI estimate — no database match"}
           </small>
         </div>
         <button

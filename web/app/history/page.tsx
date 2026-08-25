@@ -193,11 +193,13 @@ export default function HistoryPage() {
                                   a logged meal checkable against a weighed one. */}
                               <span className="block truncate text-[0.68rem] text-ink-dim">
                                 {Math.round(item.grams)}g ·{" "}
-                                {item.source === "user"
-                                  ? item.usda_description || "your own food"
-                                  : item.source === "llm"
-                                    ? "AI estimate"
-                                    : item.usda_description || "USDA"}
+                                {item.source === "barcode"
+                                  ? `${item.usda_description || item.name} · from the label`
+                                  : item.source === "user"
+                                    ? item.usda_description || "your own food"
+                                    : item.source === "llm"
+                                      ? "AI estimate"
+                                      : item.usda_description || "USDA"}
                               </span>
                             </div>
                             <span className="shrink-0 text-xs text-ink-dim tabular-nums">
