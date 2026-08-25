@@ -18,10 +18,16 @@ type DayTotals = {
 const NAV_ITEMS = [
   { label: "Today", href: "/dashboard" },
   { label: "Log", href: "/log" },
+  { label: "History", href: "/history" },
   { label: "Coach", href: "/coach" },
   { label: "Foodie", href: "/foodie" },
+];
+
+// Secondary destinations, kept out of the bottom bar so it stays thumb-sized.
+const MORE_LINKS = [
   { label: "Weigh-in", href: "/weight" },
   { label: "My foods", href: "/foods" },
+  { label: "Settings", href: "/settings" },
 ];
 
 function localDate(): string {
@@ -74,12 +80,6 @@ export default function DashboardPage() {
     };
   }, [router]);
 
-  async function logout() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push("/login");
-  }
-
   if (status === "loading") {
     return (
       <main className="flex min-h-screen items-center justify-center bg-bg">
@@ -131,13 +131,12 @@ export default function DashboardPage() {
               })}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={logout}
+          <Link
+            href="/settings"
             className="text-xs font-bold text-ink-dim underline underline-offset-2"
           >
-            Log out
-          </button>
+            Settings
+          </Link>
         </div>
 
         <div className="relative mb-4 border border-border bg-surface p-7">
@@ -178,6 +177,18 @@ export default function DashboardPage() {
         >
           Log a meal
         </Link>
+
+        <div className="mb-4 flex flex-wrap gap-2">
+          {MORE_LINKS.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="flex-1 border border-border bg-surface px-3 py-2.5 text-center text-xs font-bold text-ink"
+            >
+              {link.label}
+            </Link>
+          ))}
+        </div>
 
         <div className="flex border-t border-border bg-surface px-2 py-2.5">
           {NAV_ITEMS.map((item) =>

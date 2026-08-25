@@ -42,6 +42,23 @@ def get_profile(user=Depends(get_current_user_client)):
     return calculate_targets(TargetsInput(**profile))
 
 
+class ProfileOut(ProfileIn):
+    """The stored profile itself, for a settings screen to edit.
+
+    Separate from GET /profile, which returns computed *targets*. A settings
+    page needs the raw answers back so it can show what was chosen -- goals,
+    cuisines and especially exclusions all change over time, and until now
+    there was no way to change any of them after signing up.
+    """
+
+
+@router.get("/profile/settings", response_model=ProfileOut)
+def get_profile_settings(user=Depends(get_current_user_client)):
+    user_id, client = user
+    row = load_profile_row(client, user_id)
+    return ProfileOut(**{k: v for k, v in row.items() if k in ProfileOut.model_fields})
+
+
 def load_profile_row(client, user_id: str) -> dict:
     """Fetch the caller's profile row, or 404 if they haven't onboarded.
 

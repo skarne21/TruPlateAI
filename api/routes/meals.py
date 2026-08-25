@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -148,3 +148,85 @@ def dashboard_today(date: date, user=Depends(get_current_user_client)):
         remaining={key: targets[key] - consumed[key] for key in targets},
         meal_count=len(rows),
     )
+
+
+# How far back history can reach. Generous enough to review a month, bounded so
+# a stray query can't ask for everything ever logged.
+MAX_HISTORY_DAYS = 90
+
+
+class LoggedItem(BaseModel):
+    name: str
+    grams: float
+    kcal: float | None = None
+    protein_g: float | None = None
+    carbs_g: float | None = None
+    fat_g: float | None = None
+    source: str | None = None
+    usda_description: str | None = None
+
+
+class LoggedMeal(BaseModel):
+    id: str
+    logged_on: date
+    input_mode: str
+    caption: str | None = None
+    photo_paths: list[str] = []
+    kcal: float | None = None
+    protein_g: float | None = None
+    carbs_g: float | None = None
+    fat_g: float | None = None
+    items: list[LoggedItem] = []
+
+
+@router.get("/meals", response_model=list[LoggedMeal])
+def list_meals(days: int = 7, user=Depends(get_current_user_client)):
+    """Meals logged recently, newest first, with the items that made them up.
+
+    Items rather than totals alone: a total can't be checked against a weighed
+    plate, and reviewing what was actually recorded is the whole point of
+    being able to look back.
+    """
+    window = max(1, min(int(days), MAX_HISTORY_DAYS))
+    user_id, client = user
+    start = date.today() - timedelta(days=window - 1)
+
+    rows = (
+        client.table("meals")
+        .select("id, logged_on, input_mode, caption, photo_paths, kcal, protein_g, "
+                "carbs_g, fat_g, meal_items(name, grams, kcal, protein_g, carbs_g, "
+                "fat_g, source, usda_description)")
+        .eq("user_id", user_id)
+        .eq("status", "confirmed")
+        .gte("logged_on", start.isoformat())
+        .order("logged_at", desc=True)
+        .execute()
+    ).data
+
+    return [
+        LoggedMeal(
+            id=row["id"],
+            logged_on=date.fromisoformat(row["logged_on"]),
+            input_mode=row.get("input_mode") or "text",
+            caption=row.get("caption"),
+            photo_paths=row.get("photo_paths") or [],
+            kcal=row.get("kcal"), protein_g=row.get("protein_g"),
+            carbs_g=row.get("carbs_g"), fat_g=row.get("fat_g"),
+            items=[LoggedItem(**item) for item in (row.get("meal_items") or [])],
+        )
+        for row in rows
+    ]
+
+
+@router.delete("/meals/{meal_id}")
+def delete_meal(meal_id: str, user=Depends(get_current_user_client)):
+    """Remove a logged meal.
+
+    Scoped to the caller, so a guessed id can't reach another account's meal.
+    The items and the memory embedding go with it -- both cascade from the
+    meals row -- so a deleted meal stops affecting today's totals AND stops
+    being offered as "your usual".
+    """
+    user_id, client = user
+    client.table("meals").delete().eq("user_id", user_id).eq("id", meal_id).execute()
+    return {"deleted": meal_id}
