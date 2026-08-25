@@ -1260,8 +1260,8 @@ it goes green is how a real bug gets certified as correct behaviour.
 | | |
 |---|---|
 | Phase | 3 of 5 done — Phase 4 (accuracy evaluation, deployment) is next |
-| Tests | **202**, all offline, ~9 seconds |
-| API endpoints | 21 |
+| Tests | **207**, all offline, ~9 seconds |
+| API endpoints | 24, across 21 distinct paths |
 | Database tables | 11 (10 user-scoped with Row Level Security, plus the shared recipe corpus) |
 | Deployed | **No** — runs on one laptop |
 | Known security advisories | **0** |
