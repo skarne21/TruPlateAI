@@ -1157,6 +1157,144 @@ check. The app works. A dependency audit is the only thing that looks.
 
 ---
 
+# Week 8 — Getting it off the laptop (25 August)
+
+## The recipe that fed four — `951063c`, `873448c`
+
+Before deploying, two things had to change that only matter once the app
+leaves one machine.
+
+The first was small: the API only accepted requests from
+`http://localhost:3000`, written into the code. Deployed, the front end lives
+somewhere else entirely and every request would be refused — reported by the
+browser as a CORS error, which in this project has three separate times
+already meant something else. It now reads a comma-separated list from the
+environment. The parsing is a named function with five tests, because the
+likely mistake is a **space after the comma**: `"https://a.app, https://b.app"`
+produces an origin with a leading space that never matches anything, and the
+server logs nothing at all, because from its side the request simply was not
+allowed.
+
+The second was not small.
+
+### A number that was plausible and wrong
+
+The recipe corpus stored macros summed over the whole ingredient list, and
+recorded nothing about how many people that list feeds.
+
+For a bowl of miso soup the whole list *is* one serving. For a bolognese with
+200g of dry pasta and 200g of dry lentils — a kilogram of food — it is four.
+Both were stored as a single number. So the Foodie could offer:
+
+> **Classic Lentil Bolognese** — 1656 kcal
+
+as a meal suggestion, and be wrong by a factor of four.
+
+This is worth dwelling on because of *how* it hid. Nothing crashed. No test
+failed. The number was not garbage — a recipe really can contain 1656
+calories. It was simply answering a different question than the one being
+asked, and it is precisely the failure the whole project is arranged against:
+not a number that is obviously broken, but one that is **plausible and false**.
+
+It was caught by reading the build output and thinking a number looked large,
+then opening that recipe's ingredients:
+
+```
+Classic Lentil Bolognese: 1656 kcal, 1000g of ingredients
+     200g Brown lentils      400g Canned crushed tomatoes
+     100g Onion              100g Carrots
+     200g Pasta
+```
+
+A kilo of food and 200g of dry pasta is not one dinner.
+
+The fix: the model now reports `servings`, the macros are divided by it before
+storing, and the count is kept so the recipe stays cookable exactly as
+written while its numbers mean the same thing as a logged meal's. The search
+function returns it too — a correct per-serving figure still misleads whoever
+cooks the whole pot, so a suggestion has to be able to say what it makes.
+
+The existing 42 recipes were **deleted rather than corrected**. There is no
+way to tell a one-serving soup from a four-serving pot after the fact; the
+information was never recorded, so it cannot be recovered. Data you cannot
+trust and cannot check is worse than no data.
+
+Rebuilt afterwards: 38 recipes across all 8 cuisines, median **273 kcal per
+serving**, highest 850. Thirty of the thirty-eight make more than one serving,
+which is exactly why the old numbers were wrong so often.
+
+Two further problems surfaced while fixing it. The build script still asked
+for `gemini-2.5-flash`, which is closed to new API keys — it had been missed
+by the migration because it sits in `scripts/` rather than the app, and
+nothing imports it, so nothing failed until it was run. And it could not
+safely be re-run: it would have inserted a second copy of everything. It now
+loads the existing titles, tells the model what not to repeat, and skips any
+duplicate that comes back regardless. That matters because the *first* run
+died partway through when the daily AI quota ran out — a script you cannot
+resume is a script that loses whatever it had done.
+
+## Packaged so it runs anywhere — `8aad18c`
+
+A **container** is the code plus the exact operating system, Python version
+and libraries it needs, in one file. It exists to eliminate one sentence:
+*"it works on my machine."* This laptop is Windows with Python 3.13.14; a
+cloud server is Linux with whatever it has. Rather than hoping those match,
+the environment ships with the code.
+
+Three decisions in the `Dockerfile` are worth understanding:
+
+- **Dependencies are copied before the source.** Docker caches each step and
+  reuses it until its inputs change. Requirements change rarely; code changes
+  constantly. In this order, editing a route rebuilds seconds' worth of work.
+  Reversed, every one-character change reinstalls fifty packages.
+- **The port is not hardcoded.** Cloud Run chooses one and passes it in as
+  `$PORT`. Hardcode 8000 and the platform's health check knocks on a door
+  nobody is behind — the deploy fails with logs that look completely fine.
+- **`.env` is excluded, deliberately.** Image layers are permanent. A secret
+  copied in at one step and deleted at a later one is *still in the earlier
+  layer*, readable by anyone who pulls the image. Verified absent from the
+  built image rather than assumed.
+
+### The keep-alive that would have kept the wrong thing alive
+
+Supabase pauses a free project after about a week without **database**
+activity, and a paused project is a dead app. The plan was a scheduled job
+calling a URL every few days. The obvious URL was the health endpoint:
+
+```python
+@app.get("/health")
+def health():
+    return {"ok": True}          # never touches the database
+```
+
+That answers instantly without querying anything. A keep-alive aimed at it
+would have kept the **API** warm while the **database** slept underneath, and
+every check would have passed, green, right until the app was dead.
+
+So `/health/db` runs a real query — one row from the shared recipe corpus, no
+user data, nothing to leak. Three tests hold it, including one asserting that
+plain `/health` does *not* touch the database, so the two can never quietly
+converge back into the same thing.
+
+The lesson generalises: **the thing you keep alive has to be the thing that
+sleeps.**
+
+### Found only by running it
+
+The container was not trusted because it built. It was started, and requests
+were sent to it. That turned up something the test suite had never asked
+about: a request with **no** `Authorization` header came back `422
+Unprocessable Entity` instead of `401 Unauthorized`.
+
+The cause is quiet. The header was declared as required, so the framework
+rejected a missing one as a *malformed request* before reaching the code that
+raises 401 — which was therefore unreachable, and had probably never run.
+Access was correctly refused either way, so nothing was insecure; but a client
+was being told its request was malformed when the truth was that it needed to
+log in. Giving the header a default makes the existing 401 reachable.
+
+---
+
 # Every bug, and what it taught
 
 In order. The striking pattern: **almost none would have been caught by the
@@ -1189,6 +1327,9 @@ computer checking the code for obvious errors, and several passed the tests.**
 | 23 | The USDA key was printed in an error | `requests` puts the whole web address, key included, into the message | An unrelated failure |
 | 24 | Two thirds of food lookups silently degraded | USDA returned 404 on 13 of 20 identical requests, and nothing retried | Investigating something else |
 | 25 | Six known security flaws in installed libraries | Inherited through other libraries; one sat in the image processor that would handle uploaded photos | A routine audit run before deploying |
+| 26 | **A recipe suggested at 4x its real calories** | Macros summed over the whole pot, with nothing recording how many it feeds | A number looked large, so its ingredients were read |
+| 27 | The corpus builder asked for a retired model | Missed by the migration because it lives in scripts/, so nothing imports it and nothing failed until it ran | Running it |
+| 28 | Requests with no login returned "malformed" instead of "log in" | Required header, so the framework rejected it before the 401 could be raised | Sending real requests to the running container |
 
 ### The four themes
 
@@ -1260,11 +1401,12 @@ it goes green is how a real bug gets certified as correct behaviour.
 | | |
 |---|---|
 | Phase | 3 of 5 done — Phase 4 (accuracy evaluation, deployment) is next |
-| Tests | **207**, all offline, ~9 seconds |
-| API endpoints | 24, across 21 distinct paths |
+| Tests | **211**, all offline, ~9 seconds |
+| API endpoints | 25, across 22 distinct paths |
 | Database tables | 11 (10 user-scoped with Row Level Security, plus the shared recipe corpus) |
-| Deployed | **No** — runs on one laptop |
+| Deployed | **Not yet** — containerised and verified, waiting on a cloud account |
 | Known security advisories | **0** |
+| Recipe corpus | 38, across 8 cuisines, per serving |
 
 **Works:** signup and login · onboarding with personalised targets ·
 photo/text/voice meal logging with USDA-grounded numbers · bounded questions
@@ -1275,9 +1417,9 @@ against your allergies in code · your own saved foods, barcode scanning and
 label photographs · history you can review and correct · editable settings ·
 installable on a phone home screen.
 
-**Not built yet:** an accuracy evaluation suite · deployment · restaurant
-search for the Foodie, which needs a paid map service this project has no
-key for.
+**Not built yet:** an accuracy evaluation suite · the deployment itself ·
+restaurant search for the Foodie, which needs a paid map service this
+project has no key for.
 
 ### Known limitations, stated plainly
 
