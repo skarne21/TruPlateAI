@@ -43,6 +43,11 @@ LABEL = "gemini-3.1-flash-lite"
 # Reading the fat type and amount off a photo of the oil used.
 FAT_PHOTO = "gemini-3.1-flash-lite"
 
+# Writing the shared recipe corpus (scripts/build_recipes.py). Offline and
+# run rarely, so latency is irrelevant -- but it stays on the same model the
+# app uses so the corpus reflects what the rest of the system would produce.
+RECIPES = "gemini-3.1-flash-lite"
+
 EMBEDDING = "gemini-embedding-001"
 
 # Test fixtures only -- used to synthesise speech so voice input can be

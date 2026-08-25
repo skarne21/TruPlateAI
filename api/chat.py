@@ -294,6 +294,10 @@ def build_recipe_tool(client, exclusions: list[str]):
                     "title": r["title"], "cuisine": r["cuisine"],
                     "cost_level": r["cost_level"], "minutes": r["minutes"],
                     "kcal": round(r["kcal"]), "protein_g": round(r["protein_g"]),
+                    # Macros are per serving; the ingredient list makes
+                    # this many, so say so rather than let someone cook a
+                    # four-serving pot against a one-serving number.
+                    "servings": r.get("servings", 1),
                     "ingredients": [i["name"] for i in (r.get("ingredients") or [])],
                     "steps": r.get("steps") or [],
                 }
