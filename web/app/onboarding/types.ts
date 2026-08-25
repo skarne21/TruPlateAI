@@ -11,27 +11,36 @@ export type OnboardingState = {
   height_cm: number;
   weight_kg: number;
   age: number;
-  sex: Sex;
+  // Null until chosen. Defaulting it would silently compute a stranger's
+  // calorie target from the wrong resting-metabolism formula.
+  sex: Sex | null;
   cuisines: string[];
   budget_level: string;
   exclusions: string[];
 };
 
-// Defaults match Shivaths' own seed profile from docs/vision-prompt.md
-// (5'10.5" / 148lb converts to exactly 179cm / 67kg).
+// Everything personal starts empty. These once held Shivaths' own profile,
+// which was a harmless shortcut while he was the only user and a real bug the
+// moment anyone else signed up: a stranger would be shown someone else's body
+// stats, a pre-selected seafood allergy that was not theirs, and -- if they
+// clicked straight through -- a calorie target computed from the wrong person.
+//
+// Goal, pace and activity keep a default because each step puts the choice in
+// front of you. Height, weight, age and sex do not, because a wrong number
+// there is invisible in the result.
 export const initialState: OnboardingState = {
   goal: "gain",
   rate_lb_per_week: 0.5,
   gym_days: 5,
   training_type: "",
   activity_level: "moderate",
-  height_cm: 179,
-  weight_kg: 67,
-  age: 20,
-  sex: "male",
-  cuisines: ["South Indian"],
+  height_cm: 0,
+  weight_kg: 0,
+  age: 0,
+  sex: null,
+  cuisines: [],
   budget_level: "medium",
-  exclusions: ["Seafood"],
+  exclusions: [],
 };
 
 export const RATE_OPTIONS: Record<Goal, number[]> = {

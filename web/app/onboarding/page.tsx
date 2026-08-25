@@ -32,6 +32,13 @@ export default function OnboardingPage() {
   const [submitting, setSubmitting] = useState(false);
   const step: Step = STEPS[stepIndex];
 
+  // The stats step is the only one that can be wrong by being skipped:
+  // every other step shows its choice already made on screen. A zero
+  // height or an unchosen sex produces a confident, wrong calorie target.
+  const statsComplete =
+    state.height_cm > 0 && state.weight_kg > 0 && state.age > 0 && state.sex !== null;
+  const canAdvance = step !== "stats" || statsComplete;
+
   // Route guard: onboarding requires a signed-in session.
   useEffect(() => {
     const supabase = createClient();
@@ -125,14 +132,20 @@ export default function OnboardingPage() {
           )}
           <button
             type="button"
-            disabled={submitting}
+            disabled={submitting || !canAdvance}
             onClick={() => {
               if (stepIndex < STEPS.length - 1) setStepIndex((i) => i + 1);
               else submit();
             }}
             className="flex-1 bg-linear-to-br from-accent to-accent-2 px-4 py-3 text-sm font-extrabold text-[#1a1006] disabled:opacity-40"
           >
-            {stepIndex < STEPS.length - 1 ? "Continue" : submitting ? "Saving..." : "See my targets"}
+            {stepIndex < STEPS.length - 1
+              ? "Continue"
+              : submitting
+                ? "Saving..."
+                : statsComplete
+                  ? "See my targets"
+                  : "Fill in your stats"}
           </button>
         </div>
       </div>
@@ -322,7 +335,7 @@ function StatsStep({
             <div className="flex gap-2">
               <input
                 type="number"
-                value={ftIn.ft}
+                value={ftIn.ft || ""}
                 onChange={(e) =>
                   update("height_cm", ftInToCm(Number(e.target.value) || 0, ftIn.inch))
                 }
@@ -332,7 +345,7 @@ function StatsStep({
               <input
                 type="number"
                 step={0.5}
-                value={ftIn.inch}
+                value={ftIn.inch || ""}
                 onChange={(e) =>
                   update("height_cm", ftInToCm(ftIn.ft, Number(e.target.value) || 0))
                 }
@@ -343,7 +356,7 @@ function StatsStep({
           ) : (
             <input
               type="number"
-              value={Math.round(state.height_cm)}
+              value={state.height_cm ? Math.round(state.height_cm) : ""}
               onChange={(e) => update("height_cm", Number(e.target.value) || 0)}
               className="w-full border border-border bg-surface p-3 text-sm text-ink"
             />
@@ -364,7 +377,11 @@ function StatsStep({
           <input
             type="number"
             value={
-              weightUnit === "lb" ? Math.round(kgToLb(state.weight_kg)) : Math.round(state.weight_kg)
+              state.weight_kg
+                ? weightUnit === "lb"
+                  ? Math.round(kgToLb(state.weight_kg))
+                  : Math.round(state.weight_kg)
+                : ""
             }
             onChange={(e) => {
               const v = Number(e.target.value) || 0;
@@ -380,7 +397,7 @@ function StatsStep({
           <label className="mb-1.5 block text-xs font-semibold text-ink-dim">Age</label>
           <input
             type="number"
-            value={state.age}
+            value={state.age || ""}
             onChange={(e) => update("age", Number(e.target.value) || 0)}
             className="w-full border border-border bg-surface p-3 text-sm text-ink"
           />
