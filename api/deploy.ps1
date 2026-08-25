@@ -91,7 +91,11 @@ foreach ($name in $secretNames) {
     }
 }
 
-$envVars = "SUPABASE_URL=$($config['SUPABASE_URL']),SUPABASE_ANON_KEY=$($config['SUPABASE_ANON_KEY']),WEB_ORIGINS=$WebOrigin"
+# gcloud splits --set-env-vars on commas -- but WEB_ORIGINS is itself a
+# comma-separated list, so a second origin would be parsed as a separate
+# variable with a mangled name. The leading ^@^ tells gcloud to split on @
+# instead, which no URL contains.
+$envVars = "^@^SUPABASE_URL=$($config['SUPABASE_URL'])@SUPABASE_ANON_KEY=$($config['SUPABASE_ANON_KEY'])@WEB_ORIGINS=$WebOrigin"
 $secretRefs = ($secretNames | ForEach-Object { "$_=$($_):latest" }) -join ","
 
 Write-Host "`nBuilding and deploying (first run takes a few minutes)..."
