@@ -233,7 +233,18 @@ and failed silently."*
 
 ## 9. Deploying it
 
-Install the Google Cloud CLI, then, from `api/`:
+`api/deploy.ps1` does all of this in one command and is safe to re-run:
+
+```powershell
+gcloud auth login          # your browser, your Google account
+.\deploy.ps1 -ProjectId truplate-ai -WebOrigin https://truplate.vercel.app
+```
+
+It reads the keys from `api/.env` rather than taking them as arguments, so
+they never land in PowerShell history or terminal scrollback.
+
+The rest of this section is what that script actually does, step by step,
+so you can explain it rather than only run it. From `api/`:
 
 ```bash
 gcloud auth login

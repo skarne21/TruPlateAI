@@ -21,3 +21,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+
+# Not needed inside the image; it runs from a laptop, not the container.
+deploy.ps1
