@@ -78,9 +78,17 @@ $projectNumber = (& $gcloud projects describe $ProjectId --format="value(project
 $runtimeSa = "$projectNumber-compute@developer.gserviceaccount.com"
 Write-Host "`nGranting $runtimeSa access to the secrets..."
 foreach ($name in $secretNames) {
-    & $gcloud secrets add-iam-policy-binding $name `
+    # Not silenced: if this fails, the deploy still succeeds and the container
+    # then crashes on startup unable to read its own configuration. A warning
+    # here is far cheaper than reading Cloud Run logs to find that out.
+    $result = & $gcloud secrets add-iam-policy-binding $name `
         --member="serviceAccount:$runtimeSa" `
-        --role="roles/secretmanager.secretAccessor" 2>$null | Out-Null
+        --role="roles/secretmanager.secretAccessor" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "could not grant access to ${name}: $($result | Select-Object -Last 1)"
+    } else {
+        Write-Host "  $name readable by the service account"
+    }
 }
 
 $envVars = "SUPABASE_URL=$($config['SUPABASE_URL']),SUPABASE_ANON_KEY=$($config['SUPABASE_ANON_KEY']),WEB_ORIGINS=$WebOrigin"

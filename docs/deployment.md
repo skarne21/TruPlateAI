@@ -6,6 +6,35 @@ interview.
 
 ---
 
+## 0. What is actually deployed
+
+| | |
+|---|---|
+| API | `https://truplate-api-vk77gjxc4q-uc.a.run.app` |
+| Google Cloud project | `gen-lang-client-0297556778` ("TruPlate") |
+| Region | `us-central1` |
+| Front end | not yet deployed |
+
+Measured against the live service after deploying:
+
+| Check | Result |
+|---|---|
+| Warm response | 160-205 ms |
+| `/health/db` (real Postgres round trip) | 587 ms |
+| Request with no token | **401** |
+| Request with a bad token | **401** |
+| Preflight from the configured origin | allowed |
+| Preflight from `https://evil.example.com` | **refused** |
+
+The last two are the ones worth checking after any deploy: they prove the
+origin allowlist is not merely configured but actually discriminating.
+
+The API shares a project with the Gemini API key rather than getting its own.
+One project means one place to read quotas and one bill, and the key was
+already issued there.
+
+---
+
 ## 1. The app is three programs, not one
 
 This is the thing most people get wrong when they first deploy something. "The
