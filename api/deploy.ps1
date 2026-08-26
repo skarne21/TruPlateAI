@@ -91,23 +91,35 @@ foreach ($name in $secretNames) {
     }
 }
 
-# gcloud splits --set-env-vars on commas -- but WEB_ORIGINS is itself a
-# comma-separated list, so a second origin would be parsed as a separate
-# variable with a mangled name. The leading ^@^ tells gcloud to split on @
-# instead, which no URL contains.
-$envVars = "^@^SUPABASE_URL=$($config['SUPABASE_URL'])@SUPABASE_ANON_KEY=$($config['SUPABASE_ANON_KEY'])@WEB_ORIGINS=$WebOrigin"
+# Env vars go in a file rather than on the command line. --set-env-vars splits
+# on commas, and WEB_ORIGINS is itself a comma-separated list; gcloud's ^@^
+# custom-delimiter syntax is the documented escape hatch, but gcloud on Windows
+# is a .cmd batch file and cmd.exe treats ^ as its own escape character, so the
+# delimiter is eaten before gcloud ever sees it. A file sidesteps shell quoting
+# entirely.
+$envFile = Join-Path ([System.IO.Path]::GetTempPath()) "truplate-env-$PID.yaml"
+@"
+SUPABASE_URL: "$($config['SUPABASE_URL'])"
+SUPABASE_ANON_KEY: "$($config['SUPABASE_ANON_KEY'])"
+WEB_ORIGINS: "$WebOrigin"
+"@ | Set-Content -Path $envFile -Encoding utf8
+
 $secretRefs = ($secretNames | ForEach-Object { "$_=$($_):latest" }) -join ","
 
 Write-Host "`nBuilding and deploying (first run takes a few minutes)..."
 # --source builds with Cloud Build in the cloud, so local Docker is not needed.
 # --allow-unauthenticated means Google does not demand credentials at the door;
 # every route still verifies a Supabase session token itself.
-& $gcloud run deploy $Service `
-    --source . `
-    --region $Region `
-    --allow-unauthenticated `
-    --set-env-vars $envVars `
-    --set-secrets $secretRefs
+try {
+    & $gcloud run deploy $Service `
+        --source . `
+        --region $Region `
+        --allow-unauthenticated `
+        --env-vars-file $envFile `
+        --set-secrets $secretRefs
+} finally {
+    Remove-Item $envFile -Force -ErrorAction SilentlyContinue
+}
 
 if ($LASTEXITCODE -ne 0) { throw "Deploy failed" }
 
