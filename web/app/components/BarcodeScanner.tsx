@@ -11,6 +11,8 @@ import { useEffect, useRef, useState } from "react";
 // no rewrite: if browsers ever ship the real thing widely, deleting this
 // import is the whole migration.
 import { BarcodeDetector } from "barcode-detector/ponyfill";
+import { BarcodeIcon, CameraIcon } from "./icons";
+import { Notice, haptic } from "./ui";
 
 // Retail food formats only. Narrowing what it looks for makes each frame
 // cheaper and stops a QR code on the packaging being read as the product.
@@ -64,6 +66,7 @@ export default function BarcodeScanner({
         const found = await detector.detect(video.current);
         if (found.length > 0) {
           stop();
+          haptic([12, 40, 12]);
           onDetected(found[0].rawValue);
           return;
         }
@@ -89,37 +92,43 @@ export default function BarcodeScanner({
   }
 
   return (
-    <div className="border border-border bg-surface p-4">
-      <p className="mb-1 text-sm font-bold text-ink">Scan a barcode</p>
-      <p className="mb-3 text-xs text-ink-dim">
-        Point the camera at the package, or type the number underneath it.
-      </p>
-
-      {scanning && (
-        <div className="mb-3">
-          <video ref={video} playsInline muted className="w-full border border-border" />
+    <div>
+      {scanning ? (
+        <div className="rise relative overflow-hidden rounded-2xl border border-border bg-black">
+          <video ref={video} playsInline muted className="aspect-[4/3] w-full object-cover" />
+          {/* A reticle turns "point your phone somewhere" into "put the barcode
+              in this box", which is the difference between scanning in two
+              seconds and giving up. */}
+          <div aria-hidden className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <div className="h-24 w-56 rounded-xl border-2 border-accent/90 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]" />
+          </div>
           <button
             type="button"
             onClick={stop}
-            className="mt-2 border border-border px-3.5 py-2 text-sm font-bold text-ink"
+            className="btn btn-ghost absolute right-3 bottom-3 min-h-0 px-4 py-2 text-[0.8rem]"
           >
-            Stop scanning
+            Stop
           </button>
         </div>
-      )}
-
-      {!scanning && (
+      ) : (
         <button
           type="button"
           onClick={start}
           disabled={busy}
-          className="mb-2 w-full border border-dashed border-border px-3.5 py-2.5 text-sm font-bold text-ink-dim disabled:opacity-40"
+          className="flex w-full flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-border-strong bg-surface-2 px-6 py-10 text-center transition-transform active:scale-[0.98] disabled:opacity-40"
         >
-          Open camera
+          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-linear-to-br from-accent to-accent-2 text-on-accent">
+            <BarcodeIcon className="h-7 w-7" />
+          </span>
+          <b className="text-[0.95rem] font-extrabold text-ink">Scan the barcode</b>
+          <span className="max-w-[16rem] text-[0.78rem] text-ink-dim">
+            Packaged food gets exact numbers straight off the label.
+          </span>
         </button>
       )}
 
-      <div className="flex gap-2">
+      <div className="mt-3 flex items-center gap-2">
+        <span className="text-[0.72rem] font-bold text-ink-dim">or type it</span>
         <input
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
@@ -130,20 +139,32 @@ export default function BarcodeScanner({
             }
           }}
           inputMode="numeric"
-          placeholder="e.g. 5449000000996"
-          className="flex-1 border border-border bg-surface px-3 py-2 text-sm text-ink"
+          aria-label="Barcode number"
+          placeholder="5449000000996"
+          className="field flex-1 py-2.5 text-sm tabular-nums"
         />
         <button
           type="button"
           disabled={busy || !typed.trim()}
           onClick={submitTyped}
-          className="border border-accent bg-accent px-3.5 py-2 text-sm font-bold text-[#1a1006] disabled:opacity-40"
+          className="btn btn-ghost min-h-0 shrink-0 px-4 py-2.5 text-[0.8rem]"
         >
-          {busy ? "..." : "Look up"}
+          {busy ? "…" : "Look up"}
         </button>
       </div>
 
-      {error && <p className="mt-2 text-xs font-semibold text-warn">{error}</p>}
+      {error && (
+        <div className="mt-3">
+          <Notice tone="warn">{error}</Notice>
+        </div>
+      )}
+
+      {!scanning && !error && (
+        <p className="mt-2 flex items-center gap-1.5 text-[0.7rem] text-ink-dim">
+          <CameraIcon className="h-3.5 w-3.5" />
+          Works in any browser — no app store detour.
+        </p>
+      )}
     </div>
   );
 }

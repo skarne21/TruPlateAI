@@ -2,43 +2,79 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { apiFetch } from "@/lib/api";
-import { createClient } from "@/lib/supabase/client";
+import { apiFetch, requireSession } from "@/lib/api";
+import { localDate } from "@/lib/day";
+import TabBar from "./components/TabBar";
+import { CoachIcon, FoodieIcon, SendIcon } from "./components/icons";
+import { LoadFailed, LoadingScreen, NeedsOnboarding, Notice } from "./components/ui";
 
 type Message = { role: "user" | "assistant"; content: string };
-
-function localDate(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
-}
-
 type Assistant = "coach" | "foodie";
 
-const COPY: Record<Assistant, { title: string; blurb: string; empty: string; suggestions: string[] }> = {
+const COPY: Record<
+  Assistant,
+  {
+    title: string;
+    blurb: string;
+    empty: string;
+    suggestions: string[];
+    Icon: (p: { className?: string }) => React.ReactElement;
+    accent: string;
+    tint: string;
+  }
+> = {
   coach: {
     title: "Coach",
-    blurb: "Knows your logs and your targets.",
-    empty: "Ask about your intake, your targets, or how you're tracking. Answers come from what you've actually logged.",
+    blurb: "Knows your logs and your targets",
+    empty:
+      "Ask about your intake, your targets, or how you're tracking. Every answer comes from what you've actually logged — not from generic advice.",
     suggestions: [
       "How am I doing on protein this week?",
       "Why am I not gaining weight?",
       "What should I change tomorrow?",
     ],
+    Icon: CoachIcon,
+    accent: "text-accent",
+    tint: "bg-accent/12",
   },
   foodie: {
     title: "Foodie",
-    blurb: "Suggests food that fits what's left today.",
-    empty: "Ask what to cook or eat next. Suggestions come from real recipes, filtered to what you can safely eat.",
+    blurb: "Finds food that fits what's left today",
+    empty:
+      "Ask what to cook or eat next. Suggestions come from real recipes, hard-filtered in code against your allergies and exclusions.",
     suggestions: [
       "What should I eat tonight?",
       "Something high protein and quick",
       "Cheap dinner with what's left today",
     ],
+    Icon: FoodieIcon,
+    accent: "text-carbs",
+    tint: "bg-carbs/12",
   },
 };
+
+/** Just enough markdown for what the assistants actually emit: bold runs and
+ *  dashed bullets. A markdown library would be a dependency and a bundle for
+ *  two syntaxes -- and building React nodes rather than HTML means there is no
+ *  injection surface at all. */
+function formatted(text: string) {
+  return text.split("\n").map((line, i) => {
+    const bullet = /^\s*[-*]\s+/.test(line);
+    const body = bullet ? line.replace(/^\s*[-*]\s+/, "") : line;
+    const parts = body.split("**").map((part, j) =>
+      j % 2 === 1 ? <strong key={j}>{part}</strong> : part
+    );
+    if (bullet) {
+      return (
+        <span key={i} className="flex gap-2">
+          <span aria-hidden className="mt-[0.45em] h-1 w-1 shrink-0 rounded-full bg-current opacity-60" />
+          <span>{parts}</span>
+        </span>
+      );
+    }
+    return <span key={i} className="block">{parts.length === 1 && body === "" ? " " : parts}</span>;
+  });
+}
 
 export default function AssistantChat({ assistant }: { assistant: Assistant }) {
   const copy = COPY[assistant];
@@ -47,21 +83,15 @@ export default function AssistantChat({ assistant }: { assistant: Assistant }) {
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "no-profile">("loading");
+  const [status, setStatus] = useState<"loading" | "ready" | "no-profile" | "failed">("loading");
   const bottom = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (cancelled) return;
-      if (!session) {
-        router.replace("/login");
-        return;
-      }
+      const session = await requireSession(router);
+      if (cancelled || !session) return;
+
       const res = await apiFetch(`/chat/history?assistant=${assistant}`);
       if (cancelled) return;
       if (res.status === 404) {
@@ -72,7 +102,7 @@ export default function AssistantChat({ assistant }: { assistant: Assistant }) {
       if (cancelled) return;
       setStatus("ready");
     }
-    load();
+    load().catch(() => setStatus("failed"));
     return () => {
       cancelled = true;
     };
@@ -89,14 +119,19 @@ export default function AssistantChat({ assistant }: { assistant: Assistant }) {
     setDraft("");
     setError(null);
     setStreaming(true);
-    setMessages((prev) => [...prev, { role: "user", content: message }, { role: "assistant", content: "" }]);
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: message },
+      { role: "assistant", content: "" },
+    ]);
 
     try {
       const res = await apiFetch("/chat", {
         method: "POST",
         body: JSON.stringify({ message, today: localDate(), assistant }),
       });
-      if (!res.ok || !res.body) throw new Error(`The Coach isn't reachable (${res.status})`);
+      if (!res.ok || !res.body)
+        throw new Error(`${copy.title} isn't reachable right now (${res.status})`);
 
       // Newline-delimited JSON: one object per line. A chunk can split across
       // reads, so anything after the last newline is held back for next time.
@@ -137,54 +172,43 @@ export default function AssistantChat({ assistant }: { assistant: Assistant }) {
     }
   }
 
-  if (status === "loading") {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-bg">
-        <p className="text-sm text-ink-dim">Loading...</p>
-      </main>
-    );
-  }
+  if (status === "loading") return <LoadingScreen />;
+  if (status === "no-profile") return <NeedsOnboarding />;
+  if (status === "failed") return <LoadFailed what={`your ${copy.title} chat`} />;
 
-  if (status === "no-profile") {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-bg px-4">
-        <div className="text-center">
-          <p className="mb-4 text-sm text-ink-dim">Finish onboarding first.</p>
-          <Link
-            href="/onboarding"
-            className="bg-linear-to-br from-accent to-accent-2 px-4 py-3 text-sm font-extrabold text-[#1a1006]"
-          >
-            Complete onboarding
-          </Link>
-        </div>
-      </main>
-    );
-  }
+  const Icon = copy.Icon;
 
   return (
-    <main className="flex min-h-screen justify-center bg-bg px-4 py-10">
-      <div className="flex w-full max-w-md flex-col">
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold tracking-widest text-accent uppercase">{copy.title}</p>
-            <p className="text-sm text-ink-dim">{copy.blurb}</p>
+    <>
+      {/* A chat is the one screen that has to own the full viewport height:
+          the composer stays put and only the transcript scrolls. */}
+      <div className="pb-tabbar flex h-[100dvh] flex-col bg-bg">
+        <header className="safe-top flex shrink-0 items-center gap-3 border-b border-border bg-bg/85 px-4 pt-4 pb-3 backdrop-blur-xl">
+          <span className={`flex h-11 w-11 items-center justify-center rounded-full ${copy.tint} ${copy.accent}`}>
+            <Icon className="h-6 w-6" />
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-lg leading-tight font-extrabold text-ink">{copy.title}</h1>
+            <p className="truncate text-[0.75rem] text-ink-dim">{copy.blurb}</p>
           </div>
-          <Link href="/dashboard" className="text-xs font-bold text-ink-dim underline underline-offset-2">
-            Back
-          </Link>
-        </div>
+        </header>
 
-        <div className="mb-3 flex flex-1 flex-col gap-2.5">
+        <div className="mx-auto w-full max-w-md flex-1 overflow-y-auto px-4 py-4">
           {messages.length === 0 && (
-            <div className="border border-border bg-surface p-5">
-              <p className="mb-3 text-sm text-ink-dim">{copy.empty}</p>
-              <div className="flex flex-col gap-2">
+            <div className="rise flex flex-col items-center pt-6 text-center">
+              <span
+                className={`pop mb-4 flex h-16 w-16 items-center justify-center rounded-2xl ${copy.tint} ${copy.accent}`}
+              >
+                <Icon className="h-8 w-8" />
+              </span>
+              <p className="mb-5 max-w-xs text-[0.85rem] text-ink-dim">{copy.empty}</p>
+              <div className="flex w-full flex-col gap-2">
                 {copy.suggestions.map((suggestion) => (
                   <button
                     key={suggestion}
                     type="button"
                     onClick={() => send(suggestion)}
-                    className="border border-border p-2.5 text-left text-sm font-semibold text-ink hover:border-accent"
+                    className="choice px-4 py-3 text-left text-[0.85rem] font-semibold text-ink"
                   >
                     {suggestion}
                   </button>
@@ -193,28 +217,40 @@ export default function AssistantChat({ assistant }: { assistant: Assistant }) {
             </div>
           )}
 
-          {messages.map((message, index) => (
-            <div
-              key={index}
-              className={
-                message.role === "user"
-                  ? "self-end border border-accent bg-accent/10 px-3.5 py-2.5 text-sm text-ink"
-                  : "border border-border bg-surface px-3.5 py-2.5 text-sm whitespace-pre-wrap text-ink"
-              }
-            >
-              {message.content ||
-                (streaming && index === messages.length - 1 ? (
-                  <span className="text-ink-dim">Thinking...</span>
-                ) : null)}
-            </div>
-          ))}
+          <div className="flex flex-col gap-2.5">
+            {messages.map((message, index) => {
+              const mine = message.role === "user";
+              const waiting = !message.content && streaming && index === messages.length - 1;
+
+              return (
+                <div
+                  key={index}
+                  className={`rise max-w-[85%] px-4 py-2.5 text-[0.88rem] leading-relaxed ${
+                    mine
+                      ? "self-end rounded-[1.15rem] rounded-br-md bg-linear-to-br from-accent to-accent-2 text-on-accent"
+                      : "card self-start rounded-[1.15rem] rounded-bl-md text-ink"
+                  }`}
+                >
+                  {waiting ? (
+                    <span className="typing flex items-center gap-1 py-1" aria-label="Thinking">
+                      <span className="h-1.5 w-1.5 rounded-full bg-ink-dim" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-ink-dim" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-ink-dim" />
+                    </span>
+                  ) : (
+                    formatted(message.content)
+                  )}
+                </div>
+              );
+            })}
+          </div>
 
           {error && (
-            <p className="border border-warn/40 bg-warn/10 p-3 text-xs font-semibold text-ink">
-              {error}
-            </p>
+            <div className="mt-3">
+              <Notice tone="warn">{error}</Notice>
+            </div>
           )}
-          <div ref={bottom} />
+          <div ref={bottom} className="h-2" />
         </div>
 
         <form
@@ -222,23 +258,28 @@ export default function AssistantChat({ assistant }: { assistant: Assistant }) {
             e.preventDefault();
             send(draft);
           }}
-          className="sticky bottom-4 flex gap-2 border border-border bg-surface p-2"
+          className="mx-auto w-full max-w-md shrink-0 px-4 pb-3"
         >
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={`Ask ${copy.title}...`}
-            className="flex-1 border border-border bg-surface px-3 py-2.5 text-sm text-ink"
-          />
-          <button
-            type="submit"
-            disabled={streaming || !draft.trim()}
-            className="bg-linear-to-br from-accent to-accent-2 px-4 py-2.5 text-sm font-extrabold text-[#1a1006] disabled:opacity-40"
-          >
-            {streaming ? "..." : "Send"}
-          </button>
+          <div className="flex items-end gap-2 rounded-full border border-border bg-surface p-1.5 shadow-md">
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={`Ask ${copy.title}…`}
+              aria-label={`Message ${copy.title}`}
+              className="flex-1 bg-transparent px-3 py-2 text-[0.9rem] outline-none placeholder:text-ink-dim"
+            />
+            <button
+              type="submit"
+              disabled={streaming || !draft.trim()}
+              aria-label="Send"
+              className="btn btn-primary h-11 w-11 min-h-0 shrink-0 p-0"
+            >
+              <SendIcon className="h-5 w-5" />
+            </button>
+          </div>
         </form>
       </div>
-    </main>
+      <TabBar />
+    </>
   );
 }

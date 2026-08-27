@@ -2,12 +2,23 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { apiFetch } from "@/lib/api";
-import { createClient } from "@/lib/supabase/client";
+import { apiFetch, requireSession } from "@/lib/api";
+import { localDate } from "@/lib/day";
 import { kgToLb, lbToKg } from "@/lib/units";
+import { ScaleIcon, SparkIcon } from "../components/icons";
+import {
+  Confetti,
+  CountUp,
+  LoadFailed,
+  LoadingScreen,
+  NeedsOnboarding,
+  Notice,
+  Screen,
+  TopBar,
+  haptic,
+} from "../components/ui";
 import WeightChart from "./WeightChart";
-import { localDate, type Target, type WeighInResult, type WeightPoint } from "./types";
+import type { Target, WeighInResult, WeightPoint } from "./types";
 
 export default function WeightPage() {
   const router = useRouter();
@@ -18,20 +29,14 @@ export default function WeightPage() {
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<WeighInResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "no-profile">("loading");
+  const [status, setStatus] = useState<"loading" | "ready" | "no-profile" | "failed">("loading");
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (cancelled) return;
-      if (!session) {
-        router.replace("/login");
-        return;
-      }
+      const session = await requireSession(router);
+      if (cancelled || !session) return;
+
       const [weightsRes, targetRes] = await Promise.all([
         apiFetch("/weights"),
         apiFetch("/targets/current"),
@@ -46,7 +51,7 @@ export default function WeightPage() {
       if (cancelled) return;
       setStatus("ready");
     }
-    load();
+    load().catch(() => setStatus("failed"));
     return () => {
       cancelled = true;
     };
@@ -75,6 +80,7 @@ export default function WeightPage() {
       setResult(data);
       setTarget(data.target);
       setEntry("");
+      haptic(data.adjusted ? [12, 40, 12, 40, 20] : 12);
       const refreshed = await apiFetch("/weights");
       if (refreshed.ok) setPoints(await refreshed.json());
     } catch (e) {
@@ -84,119 +90,120 @@ export default function WeightPage() {
     }
   }
 
-  if (status === "loading") {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-bg">
-        <p className="text-sm text-ink-dim">Loading...</p>
-      </main>
-    );
-  }
-
-  if (status === "no-profile") {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-bg px-4">
-        <div className="text-center">
-          <p className="mb-4 text-sm text-ink-dim">Finish onboarding first.</p>
-          <Link
-            href="/onboarding"
-            className="bg-linear-to-br from-accent to-accent-2 px-4 py-3 text-sm font-extrabold text-[#1a1006]"
-          >
-            Complete onboarding
-          </Link>
-        </div>
-      </main>
-    );
-  }
+  if (status === "loading") return <LoadingScreen />;
+  if (status === "no-profile") return <NeedsOnboarding />;
+  if (status === "failed") return <LoadFailed what="your weigh-ins" />;
 
   return (
-    <main className="flex min-h-screen justify-center bg-bg px-4 py-10">
-      <div className="w-full max-w-md">
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold tracking-widest text-accent uppercase">Weigh-in</p>
-            <p className="text-sm text-ink-dim">Your targets learn from this.</p>
+    <Screen>
+      {/* A recalculated target is the app proving it learns. That deserves the
+          confetti more than a routine weigh-in does. */}
+      {result?.adjusted && <Confetti pieces={22} />}
+
+      <TopBar title="Weigh-in" subtitle="Your targets learn from this" back="/you" />
+
+      <section className="card card-lift rise mb-3 px-5 py-5">
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ScaleIcon className="h-5 w-5 text-accent" />
+            <span className="text-[0.85rem] font-extrabold text-ink">Today&apos;s weight</span>
           </div>
-          <Link href="/dashboard" className="text-xs font-bold text-ink-dim underline underline-offset-2">
-            Back
-          </Link>
+          <div className="flex gap-0.5 rounded-full bg-surface-2 p-0.5">
+            {(["lb", "kg"] as const).map((u) => (
+              <button
+                key={u}
+                type="button"
+                onClick={() => setUnit(u)}
+                aria-pressed={unit === u}
+                className={`rounded-full px-3 py-1 text-[0.72rem] font-extrabold ${
+                  unit === u ? "bg-surface text-ink shadow-sm" : "text-ink-dim"
+                }`}
+              >
+                {u}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="mb-4 border border-border bg-surface p-4">
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-xs font-semibold text-ink-dim">Today&apos;s weight</span>
-            <button
-              type="button"
-              onClick={() => setUnit((u) => (u === "lb" ? "kg" : "lb"))}
-              className="text-[0.68rem] font-bold text-accent underline underline-offset-2"
-            >
-              {unit === "lb" ? "kg" : "lb"}
-            </button>
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="number"
-              step="0.1"
-              inputMode="decimal"
-              value={entry}
-              onChange={(e) => setEntry(e.target.value)}
-              placeholder={unit}
-              className="flex-1 border border-border bg-surface p-3 text-sm text-ink"
-            />
-            <button
-              type="button"
-              onClick={submit}
-              disabled={saving}
-              className="bg-linear-to-br from-accent to-accent-2 px-4 py-3 text-sm font-extrabold text-[#1a1006] disabled:opacity-40"
-            >
-              {saving ? "..." : "Save"}
-            </button>
-          </div>
-          {error && <p className="mt-2 text-sm font-semibold text-warn">{error}</p>}
-        </div>
-
-        {result && (
-          <div
-            className={`mb-4 border p-4 ${
-              result.adjusted ? "border-accent bg-accent/5" : "border-border bg-surface"
-            }`}
+        <div className="flex gap-2">
+          <input
+            type="number"
+            step="0.1"
+            inputMode="decimal"
+            value={entry}
+            onChange={(e) => setEntry(e.target.value)}
+            placeholder={`0.0 ${unit}`}
+            aria-label={`Weight in ${unit}`}
+            className="field flex-1 py-3.5 text-center text-2xl font-extrabold tabular-nums"
+          />
+          <button
+            type="button"
+            onClick={submit}
+            disabled={saving}
+            className="btn btn-primary shrink-0 px-6"
           >
-            <p className="text-sm font-bold text-ink">
+            {saving ? "…" : "Save"}
+          </button>
+        </div>
+
+        {error && (
+          <div className="mt-3">
+            <Notice tone="warn">{error}</Notice>
+          </div>
+        )}
+      </section>
+
+      {result && (
+        <div
+          className={`card pop mb-3 px-4 py-4 ${result.adjusted ? "border-good/45 bg-good/8" : ""}`}
+        >
+          <div className="flex items-center gap-2">
+            {result.adjusted && <SparkIcon className="h-5 w-5 shrink-0 text-good" />}
+            <b className="text-[0.9rem] font-extrabold text-ink">
               {result.adjusted ? "Target updated" : "Target unchanged"}
+            </b>
+          </div>
+          <p className="mt-1.5 text-[0.82rem] text-ink-2">{result.target.explanation}</p>
+          {result.observed_tdee !== null && (
+            <p className="mt-2 text-[0.72rem] text-ink-dim tabular-nums">
+              Measured from {result.days_of_data} days of your own data — you burn about{" "}
+              {Math.round(result.observed_tdee)} kcal/day.
             </p>
-            <p className="mt-1 text-sm text-ink-dim">{result.target.explanation}</p>
-            {result.observed_tdee !== null && (
-              <p className="mt-2 text-xs text-ink-dim tabular-nums">
-                Estimated from {result.days_of_data} days of your data — measured burn{" "}
-                {Math.round(result.observed_tdee)} kcal/day.
-              </p>
-            )}
-          </div>
-        )}
+          )}
+        </div>
+      )}
 
-        {target && (
-          <div className="mb-4 border border-border bg-surface p-4">
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-3xl font-extrabold text-ink tabular-nums">
-                {Math.round(target.kcal).toLocaleString()}
-              </span>
-              <span className="text-sm font-bold text-ink-dim">kcal target</span>
-              <span className="ml-auto border border-border px-2 py-0.5 text-[0.68rem] font-bold text-ink-dim">
-                {target.source === "adaptive" ? "from your data" : "from the formula"}
-              </span>
-            </div>
-            <p className="mt-2 text-sm text-ink-dim">{target.explanation}</p>
+      {target && (
+        <section className="card rise mb-3 px-5 py-5">
+          <div className="flex items-baseline gap-2">
+            <p className="text-3xl leading-none font-extrabold tracking-tight text-ink">
+              <CountUp value={Math.round(target.kcal)} />
+            </p>
+            <span className="text-[0.8rem] font-bold text-ink-dim">kcal target</span>
+            <span
+              className={`pill ml-auto ${
+                target.source === "adaptive"
+                  ? "bg-good/12 text-good"
+                  : "bg-surface-2 text-ink-dim"
+              }`}
+            >
+              {target.source === "adaptive" ? "from your data" : "from the formula"}
+            </span>
           </div>
-        )}
+          <p className="mt-2.5 text-[0.82rem] text-ink-2">{target.explanation}</p>
+        </section>
+      )}
 
-        {points.length >= 2 ? (
+      {points.length >= 2 ? (
+        <div className="rise">
           <WeightChart points={points} unit={unit} toDisplay={toDisplay} />
-        ) : (
-          <p className="border border-border bg-surface p-3.5 text-xs text-ink-dim">
-            Weigh in a few times and a trend line appears here. Targets start adapting to your
-            own data after 14 days.
-          </p>
-        )}
-      </div>
-    </main>
+        </div>
+      ) : (
+        <Notice>
+          Weigh in a few times and a trend line appears here. Targets start adapting to your own
+          data after 14 days.
+        </Notice>
+      )}
+    </Screen>
   );
 }

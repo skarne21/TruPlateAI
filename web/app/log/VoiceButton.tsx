@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { MicIcon } from "../components/icons";
+import { Notice, haptic } from "../components/ui";
 
 // First format the browser supports. Chrome records webm, Firefox ogg, Safari
 // mp4 -- Gemini accepts all three, so nothing needs converting client-side.
@@ -71,6 +73,7 @@ export default function VoiceButton({
           return;
         }
         onTranscript(text);
+        haptic([10, 40, 10]);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Couldn't transcribe that");
       } finally {
@@ -81,6 +84,7 @@ export default function VoiceButton({
     recorder.current = rec;
     rec.start();
     setRecording(true);
+    haptic();
   }
 
   function stop() {
@@ -88,25 +92,38 @@ export default function VoiceButton({
   }
 
   return (
-    <div>
+    <div className="flex flex-col items-center">
       <button
         type="button"
         disabled={disabled || working}
         onClick={recording ? stop : start}
-        className={`w-full border px-3.5 py-2.5 text-sm font-bold disabled:opacity-40 ${
+        aria-label={recording ? "Stop recording" : "Say what you ate"}
+        className={`relative flex h-20 w-20 items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40 ${
           recording
-            ? "border-warn bg-warn/10 text-ink"
-            : "border-dashed border-border text-ink-dim"
+            ? "bg-warn text-white"
+            : "bg-linear-to-br from-accent to-accent-2 text-on-accent shadow-pop"
         }`}
       >
-        {working ? "Transcribing..." : recording ? "Stop recording" : "Say what you ate"}
+        {/* The halo only exists while recording -- it is the one unambiguous
+            signal that the microphone is live. */}
+        {recording && (
+          <span aria-hidden className="pulse absolute inset-0 rounded-full bg-warn/40" />
+        )}
+        <MicIcon className="relative h-8 w-8" />
       </button>
-      {recording && (
-        <p className="mt-1.5 text-xs text-ink-dim">
-          Listening — you&apos;ll get a chance to edit before anything is logged.
-        </p>
+
+      <p className="mt-3 text-center text-[0.8rem] font-bold text-ink">
+        {working ? "Transcribing…" : recording ? "Listening — tap to stop" : "Say what you ate"}
+      </p>
+      <p className="mt-0.5 text-center text-[0.72rem] text-ink-dim">
+        You&apos;ll read it back before anything is logged.
+      </p>
+
+      {error && (
+        <div className="mt-3 w-full">
+          <Notice tone="warn">{error}</Notice>
+        </div>
       )}
-      {error && <p className="mt-1.5 text-xs font-semibold text-warn">{error}</p>}
     </div>
   );
 }

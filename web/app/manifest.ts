@@ -21,8 +21,8 @@ export default function manifest(): MetadataRoute.Manifest {
     orientation: "portrait",
     // Matches the design tokens in globals.css so the splash and status bar
     // don't flash a colour the app never uses.
-    background_color: "#faf6ee",
-    theme_color: "#e85d2c",
+    background_color: "#fbf7f2",
+    theme_color: "#ff5a1f",
     categories: ["health", "fitness", "food"],
     icons: [
       { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },

@@ -19,10 +19,3 @@ export type WeighInResult = {
   observed_rate_lb_per_week: number | null;
   days_of_data: number;
 };
-
-export function localDate(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
-}

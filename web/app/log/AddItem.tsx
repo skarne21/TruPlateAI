@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { PlusIcon } from "../components/icons";
+import { Notice } from "../components/ui";
 import type { ResolvedItem, UsdaCandidate } from "./types";
 
 const DEFAULT_GRAMS = 100;
@@ -63,15 +65,16 @@ export default function AddItem({ onAdd }: { onAdd: (item: ResolvedItem) => void
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="w-full border border-dashed border-border px-3.5 py-2.5 text-sm font-semibold text-ink-dim"
+        className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border-strong py-3.5 text-[0.85rem] font-bold text-ink-dim transition-transform active:scale-[0.98]"
       >
-        + Add something the photo missed
+        <PlusIcon className="h-4 w-4" />
+        Add something the photo missed
       </button>
     );
   }
 
   return (
-    <div className="border border-border bg-surface p-3.5">
+    <div className="card rise px-4 py-4">
       <div className="flex gap-2">
         <input
           autoFocus
@@ -84,35 +87,41 @@ export default function AddItem({ onAdd }: { onAdd: (item: ResolvedItem) => void
             }
           }}
           placeholder="e.g. filter coffee with milk"
-          className="flex-1 border border-border bg-surface px-3 py-2 text-sm text-ink"
+          className="field flex-1"
         />
         <button
           type="button"
           onClick={search}
           disabled={searching}
-          className="border border-accent bg-accent px-3.5 py-2 text-sm font-bold text-[#1a1006] disabled:opacity-40"
+          className="btn btn-primary shrink-0 px-5"
         >
-          {searching ? "..." : "Search"}
+          {searching ? "…" : "Search"}
         </button>
       </div>
 
-      {error && <p className="mt-2 text-xs font-semibold text-warn">{error}</p>}
+      {error && (
+        <div className="mt-2">
+          <Notice tone="warn">{error}</Notice>
+        </div>
+      )}
 
       {results?.length === 0 && (
-        <p className="mt-2 text-xs text-ink-dim">Nothing in USDA matched that.</p>
+        <p className="mt-3 text-[0.78rem] text-ink-dim">Nothing in USDA matched that.</p>
       )}
 
       {results && results.length > 0 && (
-        <div className="mt-2 flex flex-col gap-1.5">
+        <div className="mt-3 flex flex-col gap-1.5">
           {results.map((candidate) => (
             <button
               key={candidate.fdc_id}
               type="button"
               onClick={() => add(candidate)}
-              className="border border-border p-2.5 text-left hover:border-accent"
+              className="choice px-3 py-2.5 text-left"
             >
-              <b className="block text-sm font-semibold text-ink">{candidate.description}</b>
-              <small className="text-xs text-ink-dim tabular-nums">
+              <b className="block text-[0.85rem] font-semibold text-ink">
+                {candidate.description}
+              </b>
+              <small className="text-[0.72rem] text-ink-dim tabular-nums">
                 {candidate.kcal_per_100g === null
                   ? "no calorie data"
                   : `${Math.round(candidate.kcal_per_100g)} kcal / 100g`}
@@ -125,7 +134,7 @@ export default function AddItem({ onAdd }: { onAdd: (item: ResolvedItem) => void
       <button
         type="button"
         onClick={() => setOpen(false)}
-        className="mt-2 text-xs font-bold text-ink-dim underline underline-offset-2"
+        className="mt-3 w-full py-2 text-[0.78rem] font-bold text-ink-dim"
       >
         Cancel
       </button>

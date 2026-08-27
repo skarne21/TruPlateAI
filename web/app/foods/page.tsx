@@ -2,47 +2,34 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, requireSession } from "@/lib/api";
 import { downscaleImage } from "@/lib/image";
-import { createClient } from "@/lib/supabase/client";
 import BarcodeScanner from "../components/BarcodeScanner";
-import {
-  draftFromProduct,
-  emptyDraft,
-  type Draft,
-  type SavedFood,
-} from "./types";
+import { CameraIcon, PlusIcon, TrashIcon } from "../components/icons";
+import { LoadFailed, LoadingScreen, Notice, Screen, TopBar, haptic } from "../components/ui";
+import { draftFromProduct, emptyDraft, type Draft, type SavedFood } from "./types";
 
 export default function FoodsPage() {
   const router = useRouter();
-  const [foods, setFoods] = useState<SavedFood[]>([]);
+  const [foods, setFoods] = useState<SavedFood[] | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready">("loading");
+  const [failed, setFailed] = useState(false);
   const labelInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (cancelled) return;
-      if (!session) {
-        router.replace("/login");
-        return;
-      }
+      const session = await requireSession(router);
+      if (cancelled || !session) return;
       const res = await apiFetch("/foods");
       if (cancelled) return;
-      if (res.ok) setFoods(await res.json());
-      setStatus("ready");
+      setFoods(res.ok ? await res.json() : []);
     }
-    load();
+    load().catch(() => setFailed(true));
     return () => {
       cancelled = true;
     };
@@ -130,10 +117,15 @@ export default function FoodsPage() {
       });
       if (!res.ok) throw new Error(`Couldn't save that (${res.status})`);
       const saved: SavedFood = await res.json();
-      setFoods((prev) => [...prev.filter((f) => f.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)));
+      setFoods((prev) =>
+        [...(prev ?? []).filter((f) => f.id !== saved.id), saved].sort((a, b) =>
+          a.name.localeCompare(b.name)
+        )
+      );
       setDraft(emptyDraft);
       setShowForm(false);
       setNote(`Saved. ${saved.name} will now use your numbers instead of the database's.`);
+      haptic([10, 40, 10]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save that");
     } finally {
@@ -142,163 +134,163 @@ export default function FoodsPage() {
   }
 
   async function remove(id: string) {
-    setFoods((prev) => prev.filter((f) => f.id !== id));
+    setFoods((prev) => (prev ?? []).filter((f) => f.id !== id));
     await apiFetch(`/foods/${id}`, { method: "DELETE" }).catch(() => {});
   }
 
   const field = (key: keyof Draft, label: string, extra: Record<string, unknown> = {}) => (
     <div>
-      <label className="mb-1.5 block text-xs font-semibold text-ink-dim">{label}</label>
+      <label className="mb-1.5 block text-[0.72rem] font-bold text-ink-dim">{label}</label>
       <input
         value={draft[key]}
         onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
-        className="w-full border border-border bg-surface p-2.5 text-sm text-ink"
+        className="field py-2.5 text-sm"
         {...extra}
       />
     </div>
   );
 
-  if (status === "loading") {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-bg">
-        <p className="text-sm text-ink-dim">Loading...</p>
-      </main>
-    );
-  }
+  if (failed) return <LoadFailed what="your foods" />;
+  if (!foods) return <LoadingScreen />;
 
   return (
-    <main className="flex min-h-screen justify-center bg-bg px-4 py-10">
-      <div className="w-full max-w-md">
-        <div className="mb-4 flex items-start justify-between">
-          <div>
-            <p className="text-xs font-bold tracking-widest text-accent uppercase">My foods</p>
-            <p className="text-sm text-ink-dim">
-              Anything you save here is used instead of the database.
-            </p>
-          </div>
-          <Link href="/dashboard" className="text-xs font-bold text-ink-dim underline underline-offset-2">
-            Back
-          </Link>
+    <Screen>
+      <TopBar
+        title="My foods"
+        subtitle="Saved here, used instead of the database"
+        back="/you"
+      />
+
+      <div className="mb-4">
+        <BarcodeScanner onDetected={scan} busy={busy} />
+      </div>
+
+      {note && (
+        <div className="mb-3">
+          <Notice tone="good">{note}</Notice>
         </div>
-
-        <div className="mb-4">
-          <BarcodeScanner onDetected={scan} busy={busy} />
+      )}
+      {error && (
+        <div className="mb-3">
+          <Notice tone="warn">{error}</Notice>
         </div>
+      )}
 
-        {note && (
-          <p className="mb-3 border border-good/40 bg-good/10 p-3 text-xs font-semibold text-ink">
-            {note}
-          </p>
-        )}
-        {error && <p className="mb-3 text-sm font-semibold text-warn">{error}</p>}
-
-        {showForm ? (
-          <div className="mb-4 border border-border bg-surface p-4">
-            <div className="mb-3 grid grid-cols-2 gap-3">
-              {field("name", "Name")}
-              {field("brand", "Brand (optional)")}
-            </div>
-            <p className="mb-1.5 text-xs font-semibold text-ink-dim">Per 100g</p>
-            <div className="mb-3 grid grid-cols-4 gap-2">
-              {field("kcal_per_100g", "kcal", { type: "number", inputMode: "decimal" })}
-              {field("protein_per_100g", "protein", { type: "number", inputMode: "decimal" })}
-              {field("carbs_per_100g", "carbs", { type: "number", inputMode: "decimal" })}
-              {field("fat_per_100g", "fat", { type: "number", inputMode: "decimal" })}
-            </div>
-            {field("serving_grams", "Your usual serving (grams)", {
-              type: "number",
-              inputMode: "decimal",
-            })}
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => labelInput.current?.click()}
-              className="mt-3 w-full border border-dashed border-border px-3.5 py-2.5 text-sm font-semibold text-ink-dim disabled:opacity-40"
-            >
-              {busy ? "Reading label..." : "Photograph the nutrition label instead"}
-            </button>
-            <input
-              ref={labelInput}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) readLabel(file);
-                e.target.value = "";
-              }}
-            />
-
-            <div className="mt-4 flex gap-2">
-              <button
-                type="button"
-                onClick={save}
-                disabled={busy}
-                className="flex-1 bg-linear-to-br from-accent to-accent-2 px-4 py-3 text-sm font-extrabold text-[#1a1006] disabled:opacity-40"
-              >
-                {busy ? "Saving..." : "Save food"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowForm(false);
-                  setDraft(emptyDraft);
-                }}
-                className="border border-border px-4 py-3 text-sm font-bold text-ink"
-              >
-                Cancel
-              </button>
-            </div>
+      {showForm ? (
+        <div className="card rise mb-4 px-4 py-4">
+          <div className="mb-3 grid grid-cols-2 gap-3">
+            {field("name", "Name")}
+            {field("brand", "Brand (optional)")}
           </div>
-        ) : (
+
+          <p className="mb-1.5 text-[0.72rem] font-bold text-ink-dim">Per 100g</p>
+          <div className="mb-3 grid grid-cols-4 gap-2">
+            {field("kcal_per_100g", "kcal", { type: "number", inputMode: "decimal" })}
+            {field("protein_per_100g", "protein", { type: "number", inputMode: "decimal" })}
+            {field("carbs_per_100g", "carbs", { type: "number", inputMode: "decimal" })}
+            {field("fat_per_100g", "fat", { type: "number", inputMode: "decimal" })}
+          </div>
+
+          {field("serving_grams", "Your usual serving (grams)", {
+            type: "number",
+            inputMode: "decimal",
+          })}
+
           <button
             type="button"
-            onClick={() => setShowForm(true)}
-            className="mb-4 w-full border border-dashed border-border px-3.5 py-2.5 text-sm font-semibold text-ink-dim"
+            disabled={busy}
+            onClick={() => labelInput.current?.click()}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border-strong py-3 text-[0.82rem] font-bold text-ink-dim disabled:opacity-40"
           >
-            + Add a food by hand
+            <CameraIcon className="h-4 w-4" />
+            {busy ? "Reading label…" : "Photograph the nutrition label instead"}
           </button>
-        )}
+          <input
+            ref={labelInput}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) readLabel(file);
+              e.target.value = "";
+            }}
+          />
 
-        {foods.length === 0 ? (
-          <p className="border border-border bg-surface p-3.5 text-xs text-ink-dim">
-            Nothing saved yet. This is where to fix foods the database gets wrong — it has no
+          <div className="mt-4 flex gap-2">
+            <button
+              type="button"
+              onClick={save}
+              disabled={busy}
+              className="btn btn-primary flex-1"
+            >
+              {busy ? "Saving…" : "Save food"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowForm(false);
+                setDraft(emptyDraft);
+              }}
+              className="btn btn-ghost px-5"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setShowForm(true)}
+          className="mb-4 flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border-strong py-3.5 text-[0.85rem] font-bold text-ink-dim transition-transform active:scale-[0.98]"
+        >
+          <PlusIcon className="h-4 w-4" />
+          Add a food by hand
+        </button>
+      )}
+
+      {foods.length === 0 ? (
+        <div className="card px-5 py-6 text-center">
+          <span className="mb-2 block text-3xl">🥣</span>
+          <p className="text-[0.8rem] text-ink-dim">
+            Nothing saved yet. This is where to fix foods the database gets wrong — USDA has no
             entry for poha, for instance, so it matches a berry that shares the name. Save it
             once here and it&apos;s right from then on.
           </p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {foods.map((food) => (
-              <div key={food.id} className="border border-border bg-surface p-3.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <b className="block text-sm font-bold text-ink">{food.name}</b>
-                    <small className="block text-xs text-ink-dim">
-                      {food.brand ? `${food.brand} · ` : ""}
-                      {Math.round(food.kcal_per_100g)} kcal / 100g · serving{" "}
-                      {Math.round(food.serving_grams)}g
-                      {food.barcode ? " · scanned" : ""}
-                    </small>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => remove(food.id)}
-                    aria-label={`Remove ${food.name}`}
-                    className="shrink-0 border border-border px-2 py-1 text-xs font-bold text-ink-dim"
-                  >
-                    Remove
-                  </button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {foods.map((food) => (
+            <div key={food.id} className="card px-4 py-3.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <b className="block text-[0.88rem] font-bold text-ink">{food.name}</b>
+                  <small className="block text-[0.72rem] text-ink-dim">
+                    {food.brand ? `${food.brand} · ` : ""}
+                    {Math.round(food.kcal_per_100g)} kcal / 100g · serving{" "}
+                    {Math.round(food.serving_grams)}g
+                    {food.barcode ? " · scanned" : ""}
+                  </small>
                 </div>
-                <p className="mt-1 text-xs text-ink-dim tabular-nums">
-                  {Math.round(food.protein_per_100g)}p · {Math.round(food.carbs_per_100g)}c ·{" "}
-                  {Math.round(food.fat_per_100g)}f per 100g
-                </p>
+                <button
+                  type="button"
+                  onClick={() => remove(food.id)}
+                  aria-label={`Remove ${food.name}`}
+                  className="shrink-0 rounded-lg p-2 text-ink-dim"
+                >
+                  <TrashIcon className="h-4 w-4" />
+                </button>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </main>
+              <p className="mt-1.5 text-[0.72rem] font-semibold text-ink-dim tabular-nums">
+                <span className="text-protein">{Math.round(food.protein_per_100g)}p</span> ·{" "}
+                <span className="text-carbs">{Math.round(food.carbs_per_100g)}c</span> ·{" "}
+                <span className="text-fat">{Math.round(food.fat_per_100g)}f</span> per 100g
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </Screen>
   );
 }
