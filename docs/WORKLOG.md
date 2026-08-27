@@ -38,6 +38,8 @@ changed lines *wouldn't* tell you.
 - [Week 5 — The app learns your body](#week-5--the-app-learns-your-body-9-august)
 - [Week 6 — The app remembers your meals](#week-6--the-app-remembers-your-meals-10-august)
 - [Week 7 — Suggestions, and your own foods](#week-7--suggestions-and-your-own-foods-1124-august)
+- [Week 8 — Getting it off the laptop](#week-8--getting-it-off-the-laptop-25-august)
+- [Week 9 — The front end, rebuilt](#week-9--the-front-end-rebuilt-27-august)
 - [Every bug, and what it taught](#every-bug-and-what-it-taught)
 - [Where things stand](#where-things-stand)
 
@@ -1295,6 +1297,187 @@ log in. Giving the header a default makes the existing 401 reachable.
 
 ---
 
+# Week 9 — The front end, rebuilt (27 August)
+
+Everything worked. Nothing looked like it did.
+
+Seven weeks of building had produced an app whose screens were, visually, still
+the scaffolding they started as: square-cornered boxes with hairline borders,
+no depth, no motion, and a text-only navigation strip that existed on exactly
+one screen. Every feature was there. Half of them were impossible to find.
+
+## What the competition actually does
+
+Before touching anything, three questions were worth answering from the outside
+rather than from taste.
+
+**What makes an app *look* professional in 2026?** Consistently: rounded
+corners (a soft radius reads as approachable and matches the phone's own
+screen), an elevation scale rather than flat borders, 44–48px minimum tap
+targets, primary actions inside thumb reach at the bottom, and micro-motion on
+state changes. Bottom tab bars are the dominant navigation pattern for 3–5
+sections, with **icons paired with labels** — an icon alone is a guessing game.
+
+**What do the competitors get right?** Cal AI — now owned by MyFitnessPal — is
+praised almost entirely for its interface: a focused logging flow, seamless
+switching between photo, barcode and label scanning, and animated badges in a
+"milestones" trophy room. MyFitnessPal itself is described as functional but
+dated. Yazio wins on polish. MacroFactor wins on the adaptive maths (the thing
+this app already does) but is called *overwhelming* — its coaching UI buries
+casual users.
+
+That last one is the useful warning. TruPlate has the same adaptive engine.
+Making it legible rather than intimidating is the actual design problem.
+
+**What makes an app feel good to use?** Progress rings, streaks and milestone
+badges, mostly through *anticipation* rather than reward — a ring at 93% is
+more motivating than one at 100%. And the caveat that matters in a health app:
+the same mechanics turn hostile fast. Cal AI's most common complaint is a
+**streak that resets for no reason** on a day the user did log.
+
+## What was built
+
+A design system first, then every screen on top of it.
+
+**Tokens (`app/globals.css`).** One rule decides the palette: *calories own the
+orange*. Macros get their own hues — protein blue, carbs violet, fat amber — so
+nothing on the dashboard competes to be "the number". Neutrals are warm rather
+than grey, and dark mode is a warm black, not the usual blue-black; a food app
+that looks cold looks like a spreadsheet. Radius, shadow and animation scales
+are defined once, so a change lands everywhere instead of in forty class lists.
+
+**A bottom tab bar that exists on every screen** — Today, Coach, Foodie, You,
+and a raised gradient **Log** button in the middle. Five slots is the ceiling
+before targets get too narrow to hit; the rarer destinations (weigh-in, saved
+foods, settings, history) live behind "You" instead of being crammed in.
+Putting both AI assistants in the bar is deliberate: they are the part of this
+app that no competitor has.
+
+**The dashboard is now a ring.** The number of calories left is readable at
+arm's length, and the ring *draws itself* from empty as the screen opens — a
+static arc states a fact, a filling one shows progress being made. Below it,
+three macro bars that animate to their fill, and a seven-day streak strip.
+
+**Streaks, done without the shame.** A day with nothing logged *yet* does not
+break the streak — it is only broken once the day is over. Open the app at
+breakfast and it says "5 days · log today to keep it", not "0". This is the
+exact bug Cal AI is most complained about, avoided by deciding what a streak
+means before writing the loop.
+
+**A payoff at the end of every commitment.** Confirming a meal, finishing
+onboarding, and a weigh-in that moves your target each get confetti, a haptic
+buzz and a number that counts up rather than appearing. The onboarding reveal
+is the big one: four screens of questions now end with your calorie target
+counting up from zero, which is the first moment the app is *about* you.
+
+**Logging became one screen with three modes** — Photo, Describe, Scan — as a
+segmented control. Whatever you attach in one mode stays attached in the
+others, and a line above the button says exactly what is coming with you
+("Sending 2 photos · a note"). The barcode scanner gained a reticle, because
+"point your phone somewhere" and "put the barcode in this box" are the
+difference between scanning in two seconds and giving up. The voice button is
+now a 20mm circle that visibly pulses while the microphone is live.
+
+**Everything that was hidden is now visible.** The dashboard has three labelled
+entry points (Photo / Describe / Scan) that deep-link into the right mode. A
+"You" screen collects the streak, a milestone row and every secondary tool as
+labelled rows rather than a strip of small text links.
+
+**Where the numbers come from is now a coloured chip**, not a line of grey
+small print: *From the label*, *USDA*, *Your food*, *AI estimate*. The app's
+whole honesty pitch, said in one glance.
+
+## Two pieces of real logic, and one near-miss
+
+Almost all of this is presentation, with two exceptions worth checking.
+
+**`web/lib/day.ts`.** Streak counting, "best streak", the seven-day strip, and
+the local-timezone date helper that had been copy-pasted into four screens.
+Date arithmetic is where off-by-one bugs live, and a streak that resets wrongly
+is — as above — the single most-complained-about bug in every tracker that has
+one. It has a self-check (`node lib/day.check.ts`) covering month boundaries,
+year boundaries, duplicate days, the "not logged yet today" case and the
+genuinely-broken case. Days are shifted by parsing at **noon**, so a
+daylight-saving hour can't push a date onto the day before.
+
+**The near-miss: unlayered CSS silently beats every utility class.** Written
+plainly, `.btn { min-height: 48px }` in the stylesheet would have overridden an
+`h-10` in the markup — not because it is more specific, but because Tailwind
+puts its utilities inside a CSS *cascade layer*, and any rule outside a layer
+outranks every rule inside one, regardless of specificity. Roughly a dozen
+size, padding and radius overrides across the app would have been quietly
+ignored: chat bubbles losing their asymmetric corner, the big weight input
+rendering at 16px instead of 24. Nothing would have errored. Caught by reading
+the cascade rather than the code, before it was committed; fixed by moving the
+base and component rules into `@layer base` and `@layer components`, where the
+utility always gets the last word.
+
+## The bug the redesign uncovered
+
+Starting the front end before the back end produced this in the log:
+
+```
+⨯ unhandledRejection: TypeError: Failed to fetch
+    at apiFetch (lib/api.ts:23)
+    at async load (app/dashboard/page.tsx:70)
+```
+
+The dashboard has had an error state since week 2 — *"Couldn't load today's
+totals"*. It had never once been shown. The reason is a detail of how `fetch`
+reports failure: a **404 or a 500 is a perfectly successful fetch** that
+returns a response, and the code checks `res.ok` for those. But when the
+request never reaches a server at all — API down, no network, blocked by CORS
+— `fetch` **rejects** instead. That rejection flew straight past every
+`if (!res.ok)` check into an effect that caught nothing, so the screen sat on
+its shimmering skeleton forever, looking like it was still trying when it had
+already given up.
+
+This was not new. The pre-redesign dashboard had the same shape; the redesign
+just made it visible, because a skeleton that never resolves is more obviously
+wrong than the word "Loading..." sitting there.
+
+Two fixes, and the split is the interesting part:
+
+- **One place, for the message.** `apiFetch` now catches the network-level
+  rejection and rethrows *"Can't reach the server."* The browser's own wording
+  for all three causes is "Failed to fetch", and five screens were already
+  catching errors and printing that verbatim at the user. Fixing it at the
+  single point where `fetch` is called fixes it for every caller at once.
+- **Seven places, for the state.** Each screen routes the rejection into a
+  visible failure — `load().catch(...)` — because what "failed" *looks* like
+  differs per screen. A shared `LoadFailed` screen with a retry button covers
+  the ones that had no error state at all.
+
+This is exactly the project's rule that failures must be loud, applied to the
+one failure mode nobody had tested: not a bad response, but no response.
+
+## Shipped
+
+`npx vercel deploy --prod`. The API was untouched, so Cloud Run needed no
+redeploy and the origin allowlist already named the Vercel URL. The guide's
+post-deploy checks were re-run against production and all pass: a preflight
+from `truplate.vercel.app` is allowed, one from `evil.example.com` gets no
+allow-origin header back, and an unauthenticated request still returns 401.
+The built page was also checked for `localhost:8000` — the local `.env.local`
+is gitignored, so the development API URL cannot be baked into a production
+bundle, and isn't.
+
+**What was deliberately not done:** no charting library (the weight trend is
+two polylines and a gradient fill — the maths is shorter than the dependency),
+no markdown renderer (the assistants emit bold runs and dashed bullets; twelve
+lines of React handles both, and building nodes rather than HTML means there is
+no injection surface at all), no icon package (eighteen inline SVGs that
+inherit `currentColor`), and no confetti library for a 1.3-second animation
+that is thirty divs on one keyframe. Zero new dependencies.
+
+Accessibility was not traded away for the look: focus rings are visible and
+deliberate, colour never carries meaning alone (every macro bar states its
+grams and its target in text), every icon-only button is labelled, and
+`prefers-reduced-motion` switches the whole thing off — the count-up jumps
+straight to its final number rather than being animated slower.
+
+---
+
 # Every bug, and what it taught
 
 In order. The striking pattern: **almost none would have been caught by the
@@ -1330,6 +1513,7 @@ computer checking the code for obvious errors, and several passed the tests.**
 | 26 | **A recipe suggested at 4x its real calories** | Macros summed over the whole pot, with nothing recording how many it feeds | A number looked large, so its ingredients were read |
 | 27 | The corpus builder asked for a retired model | Missed by the migration because it lives in scripts/, so nothing imports it and nothing failed until it ran | Running it |
 | 28 | Requests with no login returned "malformed" instead of "log in" | Required header, so the framework rejected it before the 401 could be raised | Sending real requests to the running container |
+| 29 | **Every screen froze on its loading skeleton when the API was down** | `fetch` rejects instead of returning a response, and no load effect caught it — so the error states that already existed never ran | Starting the front end before the back end and reading the dev-server log |
 
 ### The four themes
 
@@ -1401,10 +1585,10 @@ it goes green is how a real bug gets certified as correct behaviour.
 | | |
 |---|---|
 | Phase | 3 of 5 done — Phase 4 (accuracy evaluation, deployment) is next |
-| Tests | **211**, all offline, ~9 seconds |
+| Tests | **211** on the backend, all offline, ~9 seconds — plus one front-end self-check (`node web/lib/day.check.ts`) over the streak maths |
 | API endpoints | 25, across 22 distinct paths |
 | Database tables | 11 (10 user-scoped with Row Level Security, plus the shared recipe corpus) |
-| Deployed | **Not yet** — containerised and verified, waiting on a cloud account |
+| Deployed | **Live** — front end on Vercel, API on Cloud Run, database on Supabase (see [deployment.md](deployment.md)) |
 | Known security advisories | **0** |
 | Recipe corpus | 38, across 8 cuisines, per serving |
 
@@ -1415,7 +1599,9 @@ against target · a Coach that answers from real logged data · adaptive targets
 learned from your own weigh-ins · a Foodie that suggests recipes filtered
 against your allergies in code · your own saved foods, barcode scanning and
 label photographs · history you can review and correct · editable settings ·
-installable on a phone home screen.
+installable on a phone home screen · a rebuilt interface: bottom tab bar,
+animated calorie ring, streaks and milestones, and a celebration at the end of
+every commitment.
 
 **Not built yet:** an accuracy evaluation suite · the deployment itself ·
 restaurant search for the Foodie, which needs a paid map service this
