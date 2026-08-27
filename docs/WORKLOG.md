@@ -1476,6 +1476,77 @@ grams and its target in text), every icon-only button is labelled, and
 `prefers-reduced-motion` switches the whole thing off — the count-up jumps
 straight to its final number rather than being animated slower.
 
+## Editing a meal you already logged
+
+History could show a meal and delete it, but not fix it -- so a mistyped
+portion meant deleting the whole thing and starting again, losing the photos
+with it.
+
+Delete-and-re-log would have needed no new endpoint, which made it tempting.
+It is also the one shape this app has promised never to have: if the second
+half fails, the meal is simply gone. `PATCH /meals/{id}` instead, replacing
+items wholesale rather than diffing them -- the client already holds the whole
+list, so a replace has no partial-update states to get wrong -- and re-summing
+totals server-side for the same reason `/log` does: a client is not a trusted
+source of arithmetic.
+
+Three details were worth the tests they now have. The ownership check is a
+`select` that runs *first*, because checking by attempting the writes would
+delete another account's items on the way to discovering the meal was never
+ours. An edit cannot empty a meal, because a meal with no items has no
+calories and would silently zero the day. And the history response had to grow
+five fields -- `usda_query`, `count`, `unit`, `usda_fdc_id`, `confidence` --
+because an edit sends items straight back, and without them correcting a
+portion would quietly drop the USDA match and turn a checked item into a
+guess. Eight new tests, 219 total.
+
+The correction is also re-embedded, which is the actual point: what gets
+recognised next time has to be the fixed numbers, not the wrong ones.
+
+## "Everything is loading really slow"
+
+Measured rather than guessed, and the guess would have been wrong. Steady
+state is fine -- Cloud Run answers `/health` in 100-165 ms and Vercel serves a
+page in 130-220 ms. The first request after an idle period took **6.8
+seconds**, and the second took 260 ms. That is scale-to-zero: the container is
+asleep, and someone has to wait for it to wake.
+
+One real regression was mine. The redesigned dashboard fetched today's totals
+and sixty days of meals with `Promise.all`, so the calorie ring -- the reason
+the screen exists -- waited on data it does not use. On a cold API that is
+seconds of blank screen for nothing. The ring now renders as soon as its own
+small request lands, and the streak strip fills in afterwards.
+
+Its failure had to be handled separately too. A failed streak fetch shows
+"Streak unavailable" rather than falling back to zero, because telling someone
+on a thirty-day run that they have no streak is precisely the bug this card
+was designed around.
+
+A stale-closure catch was caught by the linter on the way: the handler read
+`day` from the effect's closure, where it is always `null`, so a late failure
+would have blanked a dashboard that had already loaded.
+
+## Clearing the test accounts
+
+75 accounts, of which 2 were real. Every user-scoped table declares
+`references auth.users(id) on delete cascade`, so deleting the auth row is the
+whole job -- and doing it per-table by hand is how orphans get left in the one
+table nobody remembered.
+
+**The bug worth recording is in the cleanup script itself.** Supabase's
+`list_users()` paginates at 50 and says nothing about it. Trusting one call
+reported a total of 50 when there were 75, so the first run deleted 48,
+reported "deleted 48, failed 0", and left a third of the accounts behind while
+looking like it had finished. Caught only because the verification pass
+re-counted and found 27 users where it expected 2 -- which is the argument for
+verifying against the world rather than against the thing that just ran.
+Ledger entry 30.
+
+Two things kept that safe. The keep list is by exact address, and anything
+matching neither the keep list nor the test pattern is *left alone* and
+reported rather than deleted -- an account nobody can classify is not one to
+delete on a guess. A dry run is the default; deleting needs `--apply`.
+
 ---
 
 # Every bug, and what it taught
@@ -1514,6 +1585,7 @@ computer checking the code for obvious errors, and several passed the tests.**
 | 27 | The corpus builder asked for a retired model | Missed by the migration because it lives in scripts/, so nothing imports it and nothing failed until it ran | Running it |
 | 28 | Requests with no login returned "malformed" instead of "log in" | Required header, so the framework rejected it before the 401 could be raised | Sending real requests to the running container |
 | 29 | **Every screen froze on its loading skeleton when the API was down** | `fetch` rejects instead of returning a response, and no load effect caught it — so the error states that already existed never ran | Starting the front end before the back end and reading the dev-server log |
+| 30 | **A cleanup script deleted a third of what it claimed to** | Supabase's `list_users()` paginates at 50 silently, so the script counted 50 where there were 75 and reported success | Re-counting the accounts afterwards instead of believing the script's own total |
 
 ### The four themes
 
@@ -1585,7 +1657,7 @@ it goes green is how a real bug gets certified as correct behaviour.
 | | |
 |---|---|
 | Phase | 3 of 5 done — Phase 4 (accuracy evaluation, deployment) is next |
-| Tests | **211** on the backend, all offline, ~9 seconds — plus one front-end self-check (`node web/lib/day.check.ts`) over the streak maths |
+| Tests | **219** on the backend, all offline, ~9 seconds — plus one front-end self-check (`node web/lib/day.check.ts`) over the streak maths |
 | API endpoints | 25, across 22 distinct paths |
 | Database tables | 11 (10 user-scoped with Row Level Security, plus the shared recipe corpus) |
 | Deployed | **Live** — front end on Vercel, API on Cloud Run, database on Supabase (see [deployment.md](deployment.md)) |
