@@ -5,6 +5,7 @@ import { apiFetch } from "@/lib/api";
 import AddItem from "../log/AddItem";
 import { round, scaleItem, sumTotals, type ResolvedItem, type Totals } from "../log/types";
 import { CheckIcon, TrashIcon } from "../components/icons";
+import PortionInput from "../components/PortionInput";
 import { Notice, haptic } from "../components/ui";
 import type { LoggedItem, LoggedMeal } from "./types";
 
@@ -103,22 +104,14 @@ export default function MealEditor({
                 <TrashIcon className="h-4 w-4" />
               </button>
             </div>
-            <div className="mt-2 flex items-center gap-2">
-              <input
-                type="number"
-                min={0}
-                value={Math.round(item.grams)}
-                aria-label={`Grams of ${item.name}`}
-                onChange={(e) =>
-                  setItems((prev) =>
-                    prev.map((it, i) =>
-                      i === index ? scaleItem(it, Math.max(0, Number(e.target.value) || 0)) : it
-                    )
-                  )
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <PortionInput
+                item={item}
+                label={`Portion of ${item.name}`}
+                onChange={(grams) =>
+                  setItems((prev) => prev.map((it, i) => (i === index ? scaleItem(it, grams) : it)))
                 }
-                className="field w-20 px-2 py-1.5 text-center text-sm tabular-nums"
               />
-              <span className="text-[0.72rem] font-bold text-ink-dim">grams</span>
               <span className="ml-auto text-[0.82rem] font-extrabold text-ink tabular-nums">
                 {round(item.kcal)} kcal
               </span>

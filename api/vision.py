@@ -146,6 +146,12 @@ YOUR JOB
    vs. risotto).
 2. Estimate portion per item in grams, using visible references (plate ~27cm,
    fork, hand). State the count and unit too (e.g. 3 pieces).
+   The unit must be the one a person would actually say out loud: cups or ml
+   for liquids, pieces or slices for countable things, tbsp for oils and
+   spreads, and the user's own serving for a saved food. Use "g" only when
+   nothing more natural fits. Grams stay the number the app calculates from,
+   but nobody measures milk in grams -- the count and unit are what they get
+   to edit, so an honest pair matters.
 3. For each item produce a `usda_query`: a plain-English search string for the
    USDA FoodData Central database ("dosa plain rice crepe", not "yummy dosa").
 4. Provide your own macro estimate per item as `llm_estimate`. This is a

@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { downscaleImage } from "@/lib/image";
 import { CameraIcon, CheckIcon, SparkIcon, TrashIcon } from "../components/icons";
+import PortionInput from "../components/PortionInput";
 import { CountUp, Notice, haptic } from "../components/ui";
 import AddItem from "./AddItem";
 import {
@@ -364,16 +365,8 @@ function ItemRow({
         </p>
       )}
 
-      <div className="mt-3 flex items-center gap-2">
-        <input
-          type="number"
-          min={0}
-          value={Math.round(item.grams)}
-          onChange={(e) => onGrams(Math.max(0, Number(e.target.value) || 0))}
-          aria-label={`Grams of ${item.name}`}
-          className="field w-20 px-2 py-2 text-center text-sm tabular-nums"
-        />
-        <span className="text-[0.75rem] font-bold text-ink-dim">grams</span>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <PortionInput item={item} label={`Portion of ${item.name}`} onChange={onGrams} />
         <span className="ml-auto text-[0.95rem] font-extrabold text-ink tabular-nums">
           {round(item.kcal)} kcal
         </span>

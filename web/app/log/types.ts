@@ -85,11 +85,30 @@ export function scaleItem(item: ResolvedItem, grams: number): ResolvedItem {
   return {
     ...item,
     grams,
+    // `count` describes the same portion in the item's own unit, so it has to
+    // move with the grams. Left alone, an item you doubled still claimed to be
+    // "1 cup" -- and that stale count is what any unit-based display reads.
+    count: item.count * factor,
     kcal: scale(item.kcal),
     protein_g: scale(item.protein_g),
     carbs_g: scale(item.carbs_g),
     fat_g: scale(item.fat_g),
   };
+}
+
+// Units that already mean grams, so offering "grams" as an alternative to them
+// would be a dropdown with the same option twice.
+const GRAM_UNITS = new Set(["g", "gm", "gms", "gram", "grams"]);
+
+/** How many grams one of this item's own units weighs, or 0 if unknown.
+ *
+ * Derived from the item itself rather than a density table: the analysis
+ * already said "1 cup = 244 g" for this milk, which is a better number than
+ * any generic table would give, and needs no new data. */
+export function gramsPerUnit(item: ResolvedItem): number {
+  if (item.count <= 0 || item.grams <= 0) return 0;
+  if (GRAM_UNITS.has((item.unit || "").trim().toLowerCase())) return 0;
+  return item.grams / item.count;
 }
 
 /** Sum a meal's items. The server re-sums these on /log, so this only keeps the

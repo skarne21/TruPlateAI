@@ -256,3 +256,12 @@ def test_the_model_is_told_not_to_match_a_merely_similar_food():
     # numbers for a different product.
     prompt = build_prompt({"cuisines": [], "exclusions": []}, library=[WHEY])
     assert "genuinely the same food" in prompt
+
+
+def test_the_prompt_asks_for_a_unit_a_person_would_say():
+    # Grams are what the maths needs, but the count and unit are what the user
+    # edits -- an item that comes back as "244 g" with no natural unit leaves
+    # them with grams as the only way to say "one cup".
+    prompt = build_prompt({"cuisines": [], "exclusions": []})
+    assert "cups or ml" in prompt
+    assert 'Use "g" only when' in prompt
