@@ -199,3 +199,60 @@ def test_fat_photo_can_report_no_fat_at_all():
 
 def test_fat_photo_prompt_asks_for_null_not_a_sentence():
     assert "null" in FAT_PHOTO_PROMPT.lower()
+
+
+# --- naming the user's own foods -----------------------------------------
+#
+# "my protein powder" can only resolve to a specific product if the model is
+# told which products this user has saved. The model still only supplies the
+# NAME; the macros come from the user's stored numbers in resolve_items.
+
+from foods import SavedFood
+from vision import describe_library
+
+WHEY = SavedFood(
+    id="f1", name="Gold Standard Whey", brand="Optimum Nutrition",
+    kcal_per_100g=400, protein_per_100g=80, carbs_per_100g=8, fat_per_100g=6,
+    serving_grams=31, source="manual",
+)
+POHA = SavedFood(
+    id="f2", name="Poha", brand=None,
+    kcal_per_100g=130, protein_per_100g=3, carbs_per_100g=26, fat_per_100g=2,
+    serving_grams=250, source="manual",
+)
+
+
+def test_the_prompt_lists_the_users_saved_foods():
+    prompt = build_prompt({"cuisines": [], "exclusions": []}, library=[WHEY])
+    assert "Gold Standard Whey" in prompt
+    # The brand is what makes "my protein powder" answerable at all.
+    assert "Optimum Nutrition" in prompt
+
+
+def test_the_prompt_gives_the_users_own_serving_size():
+    # "a scoop" means their scoop, not a generic 100g.
+    assert "31g" in describe_library([WHEY])
+
+
+def test_a_library_with_no_brand_still_reads_cleanly():
+    line = describe_library([POHA])
+    assert '"Poha"' in line
+    assert "--" not in line  # no empty brand separator left dangling
+
+
+def test_an_empty_library_says_so_rather_than_leaving_a_hole():
+    prompt = build_prompt({"cuisines": [], "exclusions": []}, library=[])
+    assert "(none saved yet)" in prompt
+
+
+def test_the_prompt_still_builds_when_no_library_is_passed():
+    # /analyze is not the only caller, and a missing library must never be an
+    # error -- the library improves logging, it is not required for it.
+    assert "SAVED FOODS" in build_prompt({"cuisines": [], "exclusions": []})
+
+
+def test_the_model_is_told_not_to_match_a_merely_similar_food():
+    # The whole risk of this feature: silently swapping in someone's saved
+    # numbers for a different product.
+    prompt = build_prompt({"cuisines": [], "exclusions": []}, library=[WHEY])
+    assert "genuinely the same food" in prompt

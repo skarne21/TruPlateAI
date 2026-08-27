@@ -161,6 +161,15 @@ export default function FoodsPage() {
         back="/you"
       />
 
+      {/* The naming trick is invisible unless someone says it out loud, and
+          it is the reason saving a food is worth the thirty seconds. */}
+      <div className="mb-4">
+        <Notice tone="good">
+          Once a food is saved you can just say <b>&ldquo;my protein powder&rdquo;</b> when
+          logging — we&apos;ll match it to the exact brand you saved and use your numbers.
+        </Notice>
+      </div>
+
       <div className="mb-4">
         <BarcodeScanner onDetected={scan} busy={busy} />
       </div>

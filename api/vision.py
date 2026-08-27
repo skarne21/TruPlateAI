@@ -12,6 +12,8 @@ from google.genai import types
 import models
 from pydantic import BaseModel, ValidationError
 
+from foods import SavedFood
+
 
 
 class VisionError(Exception):
@@ -111,6 +113,27 @@ USER PROFILE
 - Frequent restaurants: {restaurants}
 - Known meals (from meal memory): {known_meals}
 
+THE USER'S OWN SAVED FOODS
+{saved_foods}
+
+These are foods this user has defined themselves, with numbers they trust --
+off a packet, a barcode, or their own correction. If an item in this meal IS
+one of them, set that item's `name` to the saved name EXACTLY as written
+above, character for character. The app then uses their saved numbers instead
+of a database lookup.
+
+This is how a vague reference resolves: "my protein powder", "my usual shake",
+"the poha I make" should each become the exact saved name, because the user
+has already told us which product they mean.
+
+Two limits, and they matter more than the convenience:
+- Only when it is genuinely the same food. A different brand of the same
+  thing, or a similar dish, is NOT a match -- it would put the wrong numbers
+  in their log without telling them. When unsure, leave the name as you would
+  normally have written it.
+- Still fill in `usda_query` normally, as a plain-English search string for
+  the real food. It is the fallback if the saved name does not match.
+
 MULTIPLE PHOTOS
 If several photos are provided they all show THE SAME meal, from different
 angles or distances. Identify each distinct food ONCE. Never multiply portions
@@ -159,13 +182,42 @@ Always give tappable `options` and name the affected items in `affects_items`.
 """
 
 
-def build_prompt(profile: dict, known_meals: list[str] | None = None) -> str:
+def describe_library(library: list[SavedFood]) -> str:
+    """The user's saved foods, as lines the model can quote back exactly.
+
+    Brand and usual serving are included because they are what make a vague
+    reference resolvable: "my protein powder" is only answerable if the list
+    says which powder, and the serving size is the portion the user actually
+    means by "a scoop".
+    """
+    if not library:
+        return "(none saved yet)"
+
+    lines = []
+    for food in library:
+        brand = f" -- {food.brand}" if food.brand else ""
+        lines.append(
+            f'- "{food.name}"{brand} (their usual serving: '
+            f"{round(food.serving_grams)}g)"
+        )
+    return "\n".join(lines)
+
+
+def build_prompt(
+    profile: dict,
+    known_meals: list[str] | None = None,
+    library: list[SavedFood] | None = None,
+) -> str:
     """Fill the vision prompt template from the caller's profile.
 
     Every {} slot is per-user: nothing about any one user is hardcoded
     (project-plan.md 4.1). Restaurants and known meals come from meal history
     that does not exist until Phase 3; with them empty the prompt degrades
     safely by asking the hidden-fat question more often.
+
+    The library is named here but never priced here: the model's only job is
+    to say *which* saved food this is, and the macros still come from the
+    user's own stored numbers in resolve_items.
     """
 
     def as_list(values: list[str]) -> str:
@@ -176,6 +228,7 @@ def build_prompt(profile: dict, known_meals: list[str] | None = None) -> str:
         exclusions=as_list(profile.get("exclusions") or []),
         restaurants="(none yet)",
         known_meals=as_list(known_meals or []),
+        saved_foods=describe_library(library or []),
     )
 
 

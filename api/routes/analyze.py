@@ -112,12 +112,20 @@ async def analyze(
 
     user_id, client = user
     profile = load_profile_row(client, user_id)
+    # Loaded once and used twice: the model is told what is in the library so
+    # it can name a saved food exactly, and resolve_items then prices it from
+    # the user's own stored numbers. The model never supplies the macros.
+    library = load_library(client, user_id)
 
     input_mode = "photo_text" if images and caption else ("photo" if images else "text")
     # Telling the model what this user actually eats biases identification
     # towards it -- the difference between reading a photo as "dosa" and as
     # "crepe".
-    prompt = build_prompt(profile, known_meals=recent_meal_summaries(client, user_id))
+    prompt = build_prompt(
+        profile,
+        known_meals=recent_meal_summaries(client, user_id),
+        library=library,
+    )
     if caption:
         prompt += f'\n\nThe user described this meal as: "{caption}"'
     prompt += f'\n\nSet "input_mode" to "{input_mode}".'
@@ -132,7 +140,7 @@ async def analyze(
         raise HTTPException(502, f"Couldn't read that meal: {e}")
 
     # The user's own foods beat USDA -- this is what makes a correction stick.
-    items = resolve_items(analysis, library=load_library(client, user_id))
+    items = resolve_items(analysis, library=library)
     return AnalyzeResult(
         meal_summary=analysis.meal_summary,
         input_mode=input_mode,
