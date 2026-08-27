@@ -56,32 +56,44 @@ def log_meal(body: LogIn, user=Depends(get_current_user_client)):
     }).execute()
     meal_id = meal.data[0]["id"]
 
-    client.table("meal_items").insert([
-        {
-            "meal_id": meal_id,
-            "user_id": user_id,
-            "name": item.name,
-            "usda_query": item.usda_query,
-            "grams": item.grams,
-            "count": item.count,
-            "unit": item.unit,
-            "source": item.source,
-            "usda_fdc_id": item.usda_fdc_id,
-            "usda_description": item.usda_description,
-            "kcal": item.kcal,
-            "protein_g": item.protein_g,
-            "carbs_g": item.carbs_g,
-            "fat_g": item.fat_g,
-            "confidence": item.confidence,
-        }
-        for item in body.items
-    ]).execute()
+    client.table("meal_items").insert(
+        [_item_row(meal_id, user_id, item) for item in body.items]
+    ).execute()
 
-    _remember(client, user_id, meal_id, body)
+    _remember(client, user_id, meal_id, body.items, body.caption, body.analysis_json)
     return LogResult(meal_id=meal_id, totals=totals)
 
 
-def _remember(client, user_id: str, meal_id: str, body: LogIn) -> None:
+def _item_row(meal_id: str, user_id: str, item: ResolvedItem) -> dict:
+    """One meal_items row. Shared by logging and editing so a column added to
+    one can't be forgotten in the other."""
+    return {
+        "meal_id": meal_id,
+        "user_id": user_id,
+        "name": item.name,
+        "usda_query": item.usda_query,
+        "grams": item.grams,
+        "count": item.count,
+        "unit": item.unit,
+        "source": item.source,
+        "usda_fdc_id": item.usda_fdc_id,
+        "usda_description": item.usda_description,
+        "kcal": item.kcal,
+        "protein_g": item.protein_g,
+        "carbs_g": item.carbs_g,
+        "fat_g": item.fat_g,
+        "confidence": item.confidence,
+    }
+
+
+def _remember(
+    client,
+    user_id: str,
+    meal_id: str,
+    items: list[ResolvedItem],
+    caption: str | None,
+    analysis_json: dict | None,
+) -> None:
     """Store an embedding so this meal can be recognised next time.
 
     Runs after the meal is safely saved, and swallows its own failures: meal
@@ -92,11 +104,11 @@ def _remember(client, user_id: str, meal_id: str, body: LogIn) -> None:
     # user, the signature is what gets embedded. The model's prose wraps every
     # meal in the same boilerplate, which pulls unrelated meals together.
     summary = (
-        (body.analysis_json or {}).get("meal_summary")
-        or body.caption
-        or ", ".join(item.name for item in body.items)
+        (analysis_json or {}).get("meal_summary")
+        or caption
+        or ", ".join(item.name for item in items)
     )
-    embedding = embed_meal(meal_signature([item.name for item in body.items]))
+    embedding = embed_meal(meal_signature([item.name for item in items]))
     if not embedding:
         return
     try:
@@ -164,6 +176,14 @@ class LoggedItem(BaseModel):
     fat_g: float | None = None
     source: str | None = None
     usda_description: str | None = None
+    # Everything below exists so a meal can be sent back for editing exactly as
+    # it was stored. Without them an edit would silently drop the USDA match
+    # and reset confidence, which is how a corrected meal becomes a worse one.
+    usda_query: str | None = None
+    count: float | None = None
+    unit: str | None = None
+    usda_fdc_id: int | None = None
+    confidence: float | None = None
 
 
 class LoggedMeal(BaseModel):
@@ -195,7 +215,8 @@ def list_meals(days: int = 7, user=Depends(get_current_user_client)):
         client.table("meals")
         .select("id, logged_on, input_mode, caption, photo_paths, kcal, protein_g, "
                 "carbs_g, fat_g, meal_items(name, grams, kcal, protein_g, carbs_g, "
-                "fat_g, source, usda_description)")
+                "fat_g, source, usda_description, usda_query, count, unit, "
+                "usda_fdc_id, confidence)")
         .eq("user_id", user_id)
         .eq("status", "confirmed")
         .gte("logged_on", start.isoformat())
@@ -216,6 +237,62 @@ def list_meals(days: int = 7, user=Depends(get_current_user_client)):
         )
         for row in rows
     ]
+
+
+class EditIn(BaseModel):
+    items: list[ResolvedItem]
+    caption: str | None = None
+
+
+@router.patch("/meals/{meal_id}", response_model=LogResult)
+def edit_meal(meal_id: str, body: EditIn, user=Depends(get_current_user_client)):
+    """Correct a meal that is already logged.
+
+    Deleting and re-logging would have needed no new endpoint, but it loses the
+    photos and the original date, and a failure between the two steps loses the
+    meal outright -- which is the one thing this app promises never to do.
+
+    Items are replaced wholesale rather than diffed: the client already holds
+    the whole list, so a replace has no partial-update states to get wrong.
+    Totals are re-summed here for the same reason as on /log -- a client is not
+    a trusted source of arithmetic.
+    """
+    user_id, client = user
+
+    if not body.items:
+        raise HTTPException(400, "A meal needs at least one item")
+
+    # Ownership first, and by select rather than by trusting the later writes:
+    # a guessed id from another account must not delete their meal_items on the
+    # way to finding out it was never ours.
+    owned = (
+        client.table("meals")
+        .select("id")
+        .eq("id", meal_id)
+        .eq("user_id", user_id)
+        .execute()
+    ).data
+    if not owned:
+        raise HTTPException(404, "No such meal")
+
+    totals = totals_for(body.items)
+
+    # ponytail: three writes, no transaction -- supabase-py has none, so a
+    # failure mid-way leaves items and totals disagreeing until the next edit.
+    # The order puts the single-row update last so the window is as small as
+    # possible; wrap it in a Postgres function if this ever needs to be atomic.
+    client.table("meal_items").delete().eq("meal_id", meal_id).eq("user_id", user_id).execute()
+    client.table("meal_items").insert(
+        [_item_row(meal_id, user_id, item) for item in body.items]
+    ).execute()
+    client.table("meals").update({"caption": body.caption, **totals}).eq(
+        "id", meal_id
+    ).eq("user_id", user_id).execute()
+
+    # Re-embedding is the whole point of letting people correct a meal: what
+    # gets recognised next time has to be the fixed numbers, not the wrong ones.
+    _remember(client, user_id, meal_id, body.items, body.caption, None)
+    return LogResult(meal_id=meal_id, totals=totals)
 
 
 @router.delete("/meals/{meal_id}")

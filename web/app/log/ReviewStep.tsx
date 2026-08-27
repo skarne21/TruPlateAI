@@ -9,6 +9,7 @@ import AddItem from "./AddItem";
 import {
   LOW_CONFIDENCE,
   round,
+  scaleItem,
   sumTotals,
   type AnalyzeResult,
   type FatAnswer,
@@ -121,20 +122,7 @@ export default function ReviewStep({
   }
 
   function updateGrams(index: number, grams: number) {
-    // Macros are linear in grams, so scaling the existing numbers is exact and
-    // saves a round-trip. The server re-sums the meal totals from these items
-    // on /log, so the stored total always matches the submitted parts.
-    const item = items[index];
-    const factor = item.grams > 0 ? grams / item.grams : 0;
-    const scaled: ResolvedItem = {
-      ...item,
-      grams,
-      kcal: item.kcal === null ? null : item.kcal * factor,
-      protein_g: item.protein_g === null ? null : item.protein_g * factor,
-      carbs_g: item.carbs_g === null ? null : item.carbs_g * factor,
-      fat_g: item.fat_g === null ? null : item.fat_g * factor,
-    };
-    replace(items.map((it, i) => (i === index ? scaled : it)));
+    replace(items.map((it, i) => (i === index ? scaleItem(it, grams) : it)));
   }
 
   function replace(next: ResolvedItem[]) {

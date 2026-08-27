@@ -73,6 +73,25 @@ export function round(value: number | null): number {
   return Math.round(value ?? 0);
 }
 
+/** Re-weigh an item. Macros are linear in grams, so scaling what we already
+ *  have is exact and saves a round trip -- the server re-sums the meal from
+ *  these parts anyway, so the stored total always matches what was submitted.
+ *
+ *  Lives here because three screens re-weigh items: the scanned-packet list,
+ *  the review step, and editing a meal in history. */
+export function scaleItem(item: ResolvedItem, grams: number): ResolvedItem {
+  const factor = item.grams > 0 ? grams / item.grams : 0;
+  const scale = (value: number | null) => (value === null ? null : value * factor);
+  return {
+    ...item,
+    grams,
+    kcal: scale(item.kcal),
+    protein_g: scale(item.protein_g),
+    carbs_g: scale(item.carbs_g),
+    fat_g: scale(item.fat_g),
+  };
+}
+
 /** Sum a meal's items. The server re-sums these on /log, so this only keeps the
  *  screen honest while you are still editing. */
 export function sumTotals(items: ResolvedItem[]): Totals {

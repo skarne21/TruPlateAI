@@ -5,29 +5,10 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiFetch, requireSession } from "@/lib/api";
 import { dayLabel } from "@/lib/day";
-import { CameraIcon, ChevronDown, TrashIcon } from "../components/icons";
+import { CameraIcon, ChevronDown, PencilIcon, TrashIcon } from "../components/icons";
+import MealEditor from "./MealEditor";
+import type { LoggedItem, LoggedMeal } from "./types";
 import { LoadingScreen, Notice, Screen, TopBar } from "../components/ui";
-
-type LoggedItem = {
-  name: string;
-  grams: number;
-  kcal: number | null;
-  protein_g: number | null;
-  source: string | null;
-  usda_description: string | null;
-};
-
-type LoggedMeal = {
-  id: string;
-  logged_on: string;
-  input_mode: string;
-  caption: string | null;
-  kcal: number | null;
-  protein_g: number | null;
-  carbs_g: number | null;
-  fat_g: number | null;
-  items: LoggedItem[];
-};
 
 const RANGES = [
   { label: "7 days", days: 7 },
@@ -63,6 +44,7 @@ export default function HistoryPage() {
   const [loaded, setLoaded] = useState<{ days: number; meals: LoggedMeal[] | null } | null>(null);
   const [days, setDays] = useState(7);
   const [open, setOpen] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
 
   const meals = loaded?.meals ?? [];
   const status = loaded?.days !== days ? "loading" : loaded.meals === null ? "error" : "ready";
@@ -182,7 +164,32 @@ export default function HistoryPage() {
                         />
                       </button>
 
-                      {expanded && (
+                      {expanded && editing === meal.id && (
+                        <MealEditor
+                          meal={meal}
+                          onCancel={() => setEditing(null)}
+                          onSaved={(items, caption, totals) => {
+                            // Patched in place rather than refetched: the
+                            // server just told us the totals it stored, and a
+                            // reload would throw away the open card.
+                            setLoaded((prev) =>
+                              prev?.meals
+                                ? {
+                                    ...prev,
+                                    meals: prev.meals.map((m) =>
+                                      m.id === meal.id
+                                        ? { ...m, items, caption, ...totals }
+                                        : m
+                                    ),
+                                  }
+                                : prev
+                            );
+                            setEditing(null);
+                          }}
+                        />
+                      )}
+
+                      {expanded && editing !== meal.id && (
                         <div className="border-t border-border bg-surface-2 px-4 py-3">
                           {meal.items.map((item, index) => (
                             <div
@@ -205,14 +212,24 @@ export default function HistoryPage() {
                               </span>
                             </div>
                           ))}
-                          <button
-                            type="button"
-                            onClick={() => remove(meal.id)}
-                            className="mt-1 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[0.75rem] font-bold text-warn"
-                          >
-                            <TrashIcon className="h-3.5 w-3.5" />
-                            Delete this meal
-                          </button>
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setEditing(meal.id)}
+                              className="btn btn-ghost min-h-10 flex-1 text-[0.78rem]"
+                            >
+                              <PencilIcon className="h-4 w-4" />
+                              Edit this meal
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => remove(meal.id)}
+                              className="btn min-h-10 px-4 text-[0.78rem] text-warn"
+                            >
+                              <TrashIcon className="h-4 w-4" />
+                              Delete
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>

@@ -15,7 +15,14 @@ import {
   FoodieIcon,
   MicIcon,
 } from "../components/icons";
-import { LoadingScreen, NeedsOnboarding, Notice, Screen, TopBar } from "../components/ui";
+import {
+  LoadingScreen,
+  NeedsOnboarding,
+  Notice,
+  Screen,
+  Skeleton,
+  TopBar,
+} from "../components/ui";
 
 type DayTotals = {
   date: string;
@@ -54,7 +61,11 @@ function greeting(): string {
 export default function DashboardPage() {
   const router = useRouter();
   const [day, setDay] = useState<DayTotals | null>(null);
-  const [meals, setMeals] = useState<Meal[]>([]);
+  const [meals, setMeals] = useState<Meal[] | null>(null);
+  // Distinct from "not here yet": showing "Start a streak" to someone on a
+  // 30-day run is the exact bug this card was designed to avoid, so a failure
+  // says so rather than rendering a confident zero.
+  const [streakError, setStreakError] = useState(false);
   const [status, setStatus] = useState<"loading" | "no-profile" | "error" | "ready">("loading");
 
   useEffect(() => {
@@ -67,10 +78,13 @@ export default function DashboardPage() {
       if (cancelled || !session) return;
 
       const today = localDate();
-      const [dayRes, mealsRes] = await Promise.all([
-        apiFetch(`/dashboard/today?date=${today}`),
-        apiFetch(`/meals?days=${HISTORY_DAYS}`),
-      ]);
+
+      // Deliberately not Promise.all. The ring is the reason this screen
+      // exists and needs one small request; the streak strip needs sixty days
+      // of meals. Awaiting both together made the headline number wait on data
+      // it does not use -- on a cold API that is seconds of blank screen for
+      // nothing.
+      const dayRes = await apiFetch(`/dashboard/today?date=${today}`);
       if (cancelled) return;
 
       if (dayRes.status === 404 || dayRes.status === 406) {
@@ -83,9 +97,19 @@ export default function DashboardPage() {
       }
 
       setDay(await dayRes.json());
-      if (mealsRes.ok) setMeals(await mealsRes.json());
-      if (cancelled) return;
       setStatus("ready");
+
+      // Caught here rather than on the outer promise: by this point the
+      // dashboard is already on screen and usable, so a failed streak fetch
+      // must degrade this one card, not blank the whole page.
+      try {
+        const mealsRes = await apiFetch(`/meals?days=${HISTORY_DAYS}`);
+        if (cancelled) return;
+        if (!mealsRes.ok) throw new Error(String(mealsRes.status));
+        setMeals(await mealsRes.json());
+      } catch {
+        if (!cancelled) setStreakError(true);
+      }
     }
 
     load().catch(() => setStatus("error"));
@@ -109,10 +133,10 @@ export default function DashboardPage() {
   }
 
   const today = localDate();
-  const loggedDays = new Set(meals.map((m) => m.logged_on));
+  const loggedDays = new Set((meals ?? []).map((m) => m.logged_on));
   const streak = streakFrom(loggedDays, today);
   const week = lastSevenDays(loggedDays, today);
-  const todaysMeals = meals.filter((m) => m.logged_on === today);
+  const todaysMeals = (meals ?? []).filter((m) => m.logged_on === today);
   const remaining = Math.round(day.remaining.kcal);
 
   return (
@@ -162,17 +186,27 @@ export default function DashboardPage() {
             <FlameIcon
               className={`h-5 w-5 ${streak > 0 ? "text-accent" : "text-ink-dim opacity-50"}`}
             />
-            <b className="text-sm font-extrabold text-ink">
-              {streak > 0 ? `${streak} day streak` : "Start a streak"}
-            </b>
+            {/* A zero here before the data lands would read as "you broke your
+                streak", which is the one thing this card must never say wrongly. */}
+            {streakError ? (
+              <b className="text-sm font-bold text-ink-dim">Streak unavailable</b>
+            ) : meals === null ? (
+              <Skeleton className="h-4 w-24" />
+            ) : (
+              <b className="text-sm font-extrabold text-ink">
+                {streak > 0 ? `${streak} day streak` : "Start a streak"}
+              </b>
+            )}
           </div>
-          <span className="text-[0.7rem] font-semibold text-ink-dim">
-            {loggedDays.has(today)
-              ? "Today’s in the bag"
-              : streak > 0
-                ? "Log today to keep it"
-                : "Log a meal to begin"}
-          </span>
+          {meals !== null && !streakError && (
+            <span className="text-[0.7rem] font-semibold text-ink-dim">
+              {loggedDays.has(today)
+                ? "Today’s in the bag"
+                : streak > 0
+                  ? "Log today to keep it"
+                  : "Log a meal to begin"}
+            </span>
+          )}
         </div>
 
         <div className="flex justify-between">
@@ -245,7 +279,12 @@ export default function DashboardPage() {
           </Link>
         </div>
 
-        {todaysMeals.length === 0 ? (
+        {meals === null && !streakError ? (
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-16 rounded-2xl" />
+            <Skeleton className="h-16 rounded-2xl" />
+          </div>
+        ) : todaysMeals.length === 0 ? (
           <div className="card flex flex-col items-center px-5 py-7 text-center">
             <span className="mb-2 text-3xl">🍽️</span>
             <p className="mb-4 text-[0.8rem] text-ink-dim">

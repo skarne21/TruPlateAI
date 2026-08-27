@@ -17,7 +17,7 @@ import {
 import { Confetti, CountUp, LoadingScreen, Notice, Screen, TopBar, haptic } from "../components/ui";
 import ReviewStep from "./ReviewStep";
 import VoiceButton from "./VoiceButton";
-import { sumTotals, type AnalyzeResult, type ResolvedItem, type Totals } from "./types";
+import { scaleItem, sumTotals, type AnalyzeResult, type ResolvedItem, type Totals } from "./types";
 
 type Photo = { blob: Blob; previewUrl: string };
 type Mode = "photo" | "describe" | "scan";
@@ -160,20 +160,7 @@ function LogScreen() {
 
   /** Rescale a scanned item, which is exact because label macros are linear. */
   function setScannedGrams(index: number, grams: number) {
-    setScanned((prev) =>
-      prev.map((item, i) => {
-        if (i !== index) return item;
-        const factor = item.grams > 0 ? grams / item.grams : 0;
-        return {
-          ...item,
-          grams,
-          kcal: (item.kcal ?? 0) * factor,
-          protein_g: (item.protein_g ?? 0) * factor,
-          carbs_g: (item.carbs_g ?? 0) * factor,
-          fat_g: (item.fat_g ?? 0) * factor,
-        };
-      })
-    );
+    setScanned((prev) => prev.map((item, i) => (i === index ? scaleItem(item, grams) : item)));
   }
 
   async function analyze() {
